@@ -44,29 +44,31 @@ def split_audio_file(audio_file: str) :
         splitWav.append(chunk_name)
     return splitWav
 
+def initHugeModel():
+# Donwload du model OPUSMT
+    disable_progress_bars()
+    huggingface_hub.snapshot_download(repo_id="Helsinki-NLP/opus-mt-en-ru", 
+                    repo_type='model',
+                    local_dir='/home/drodriguez/dev/opus-mt-fr-ru/',
+                    local_files_only=False,
+                    cache_dir='/home/drodriguez/dev/opus-mt-fr-ru/.cache/')
+
+    huggingface_hub.snapshot_download(repo_id="Helsinki-NLP/opus-mt-ru-hy", 
+                    repo_type='model',
+                    local_dir='/home/drodriguez/dev/opus-mt-ru-hy/',
+                    local_files_only=False,
+                    cache_dir='/home/drodriguez/dev/opus-mt-ru-hy/.cache/')
+
+
+# CLEF OPENAI  pour accèder au service de transcription
+openai.api_key = os.environ["OPENAI_KEY"]
+initHugeModel()
+
 video = download_video_yt(url="https://youtu.be/LcmvyDsjV9w",path='/tmp/',video_file='video.mp4')
 audio = convert_video_to_audio_moviepy(video_file=video)
 chunks = split_audio_file(audio)
 
-# CLEF OPENAI  pour accèder au service de transcription
-openai.api_key = os.environ["OPENAI_KEY"]
-
-# Donwload du model OPUSMT
-disable_progress_bars()
-huggingface_hub.snapshot_download(repo_id="Helsinki-NLP/opus-mt-en-ru", 
-                repo_type='model',
-                local_dir='/home/drodriguez/dev/opus-mt-fr-ru/',
-                local_files_only=False,
-                cache_dir='/home/drodriguez/dev/opus-mt-fr-ru/.cache/')
-
-huggingface_hub.snapshot_download(repo_id="Helsinki-NLP/opus-mt-ru-hy", 
-                repo_type='model',
-                local_dir='/home/drodriguez/dev/opus-mt-ru-hy/',
-                local_files_only=False,
-                cache_dir='/home/drodriguez/dev/opus-mt-ru-hy/.cache/')
-
 for waves in chunks :
-
     with open(waves, "rb") as audio_file:
         SousTitre = openai.Audio.transcribe(
             file = audio_file,
