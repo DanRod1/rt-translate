@@ -47,13 +47,13 @@ def split_audio_file(audio_file: str) :
 def initHugeModel():
 # Donwload du model OPUSMT
     disable_progress_bars()
-    huggingface_hub.snapshot_download(repo_id="Helsinki-NLP/opus-mt-en-ru", 
+    snapshot_download(repo_id="Helsinki-NLP/opus-mt-en-ru", 
                     repo_type='model',
                     local_dir='/home/drodriguez/dev/opus-mt-fr-ru/',
                     local_files_only=False,
                     cache_dir='/home/drodriguez/dev/opus-mt-fr-ru/.cache/')
 
-    huggingface_hub.snapshot_download(repo_id="Helsinki-NLP/opus-mt-ru-hy", 
+    snapshot_download(repo_id="Helsinki-NLP/opus-mt-ru-hy", 
                     repo_type='model',
                     local_dir='/home/drodriguez/dev/opus-mt-ru-hy/',
                     local_files_only=False,
