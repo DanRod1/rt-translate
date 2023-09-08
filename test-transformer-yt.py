@@ -4,7 +4,7 @@ from pytube import YouTube
 from moviepy.editor import VideoFileClip
 from pydub import AudioSegment
 from pydub.utils import make_chunks
-import huggingface_hub
+from huggingface_hub import snapshot_download
 from huggingface_hub.utils import are_progress_bars_disabled, disable_progress_bars, enable_progress_bars
 from transformers import pipeline
 from html import unescape
