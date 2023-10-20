@@ -108,11 +108,10 @@ def initHugeModel():
 openai.api_key = os.environ["OPENAI_KEY"]
 
 options = parseARgs(argparse.ArgumentParser())
+if __name__ == '__main__':
+    initHugeModel()
+    audio_file = download_video_yt(url=options.url,audioDir=options.audioDir)
+    chunks = split_audio_file(audio_file)
 
-initHugeModel()
-
-audio_file = download_video_yt(url=options.url,audioDir=options.audioDir)
-chunks = split_audio_file(audio_file)
-
-for chunk in chunks :
-    transcribe(chunk = chunk, inputLanguage = options.inputLanguage, outputLanguage = options.outputLanguage)
+    for chunk in chunks :
+        transcribe(chunk = chunk, inputLanguage = options.inputLanguage, outputLanguage = options.outputLanguage)
