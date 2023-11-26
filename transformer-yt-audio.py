@@ -16,6 +16,7 @@ import traceback
 import argparse
 import re
 from datetime import timedelta
+from moviepy.editor import *
 
 def generateSrt(srtFile: any , data :dict = {}, outputLanguage :str = '', init: list = ['00','00','00,000']):
     for keys in data :
@@ -110,22 +111,28 @@ def transcribe(chunk :str = '', inputLanguage :str = 'fr', outputLanguage :str =
 
 
 def download_video_yt(url: str, audioDir: str ):
-    """Download the video url on youtube"""
-    file_ = open(file=audioDir+'/buffer-rt-translate', mode='wb+')
-    try:
-        yt = YouTube(url, use_oauth=False, allow_oauth_cache=True)
-    except:
-        traceback.print_exc()
-    if yt.age_restricted:
-        yt.bypass_age_gate()
-    
-    for key, values in yt.streams.itag_index.items() :
-        if values.is_progressive is False and values.audio_codec == 'opus' :
-            yt.streams.get_by_itag(key).download(output_path=audioDir,filename='audio.mp3')
+    if re.match('^file:/',url):
+        video = VideoFileClip(url) # 2.
+        audio = video.audio # 3.
+        audio.write_audiofile(audioDir+'/audio.mp3') # 4.
+    else:
+        """Download the video url on youtube"""
+        file_ = open(file=audioDir+'/buffer-rt-translate', mode='wb+')
+        try:
+            yt = YouTube(url, use_oauth=False, allow_oauth_cache=True)
+        except:
+            traceback.print_exc()
+        if yt.age_restricted:
+            yt.bypass_age_gate()
+        
+        for key, values in yt.streams.itag_index.items() :
+            if values.is_progressive is False and values.audio_codec == 'opus' :
+                yt.streams.get_by_itag(key).download(output_path=audioDir,filename='audio.mp3')
     return audioDir+'/audio.mp3'
 
 def split_audio_file(audio_file: str, audioDir:str) :    
-    myaudio = AudioSegment.from_file(audio_file , codec="opus") 
+    #myaudio = AudioSegment.from_file(audio_file , codec="opus") 
+    myaudio = AudioSegment.from_mp3(audio_file) 
     chunk_length_ms = 10000 # pydub calculates in millisec
     chunks = make_chunks(myaudio, chunk_length_ms) #Make chunks of one sec
 
@@ -152,6 +159,12 @@ def initHugeModel():
                     local_dir='/home/drodriguez/dev/opus-mt-ru-hy/',
                     local_files_only=False,
                     cache_dir='/home/drodriguez/dev/opus-mt-ru-hy/.cache/')
+
+    snapshot_download(repo_id="Helsinki-NLP/opus-mt-fr-es", 
+                    repo_type='model',
+                    local_dir='/home/drodriguez/dev/opus-mt-fr-es/',
+                    local_files_only=False,
+                    cache_dir='/home/drodriguez/dev/opus-mt-fr-es/.cache/')
 
 # CLEF OPENAI  pour accèder au service de transcription
 openai.api_key = os.environ["OPENAI_KEY"]
