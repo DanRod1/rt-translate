@@ -17,17 +17,18 @@ import argparse
 import re
 from datetime import timedelta
 from moviepy.editor import *
+import ffmpeg
 
-def generateSrt(srtFile: any , data :dict = {}, outputLanguage :str = '', init: list = ['00','00','00,000']):
+def generateSrt(srtFile: any , data :dict = {}, outputLanguage :str = '', init: list = ['00','00','00,000'], verbose :bool = False):
     for keys in data :
         pattern = '\d+'
         result = re.search(pattern=pattern,string=keys) 
         index = int(result.group())
         seconds = (index + 1) * 10
         end = str(timedelta(seconds=seconds)).split(':')
-        print(f'{index}')
+        if verbose : print(f'{index}')
         srtFile.write(f'{index}\n')
-        print(f'{init}')
+        if verbose : print(f'{init}')
         srtFile.write(f'{":".join(init)} --> ')
         count = 0
         returnValue = []
@@ -47,7 +48,10 @@ def generateSrt(srtFile: any , data :dict = {}, outputLanguage :str = '', init: 
         returnValue = init
         srtFile.write(f' \n')
         srtFile.write(f'{data[keys][outputLanguage]}\n')
-        print(f'{returnValue}')     
+        if verbose :
+            print(f'{returnValue}') 
+        else :
+            print(f'in progress')    
     return returnValue
 
 def parseARgs(parser = None ):
@@ -61,14 +65,20 @@ def parseARgs(parser = None ):
                     help="url de la video téléchargé")
     parser.add_argument("-a", "--audioDir", action="store", default = 'Audio',
                     help="repertoire Audio Cache")
+    parser.add_argument("-P", "--videoPath", action="store", default = 'Video',
+                    help="repertoire Video Cache")
     args = parser.parse_args()
-    
+
+    if re.match('^file:/',args.url):
+        videoPath = re.sub('^file:','',args.url)
+        args.videoPath = videoPath
+
     if args.verbose:
         print(f"usage is transformer-yt-audio.py -v | --verbose \n")
     else:
         return args
 
-def transcribe(chunk :str = '', inputLanguage :str = 'fr', outputLanguage :str = 'ru'):
+def transcribe(chunk :str = '', inputLanguage :str = 'fr', outputLanguage :str = 'ru', verbose : bool = False):
     exclude = [ 'Merci d\'avoir regardé cette vidéo !\n',
                 'Sous-titres réalisés para la communauté d\'Amara.org\n'
               ]
@@ -86,35 +96,37 @@ def transcribe(chunk :str = '', inputLanguage :str = 'fr', outputLanguage :str =
     translateSubtile = unescape(intputText[0]['translation_text'])
 
     if SousTitre not in exclude :
-        print("#############################################")
-        print(f"# Code Language en entrée : {inputLanguage} ")
-        print("#############################################")
-        print(SousTitre)
-        print("########################################################################")
-        print(f"# Traduction selon le model opus mt {inputLanguage} => {outputLanguage}")
-        print("########################################################################")
-        print(translateSubtile)
-        print(f"\n")
+        if verbose :
+            print("#############################################")
+            print(f"# Code Language en entrée : {inputLanguage} ")
+            print("#############################################")
+            print(SousTitre)
+            print("########################################################################")
+            print(f"# Traduction selon le model opus mt {inputLanguage} => {outputLanguage}")
+            print("########################################################################")
+            print(translateSubtile)
+            print(f"\n")
         subtitles = {chunk:{inputLanguage:SousTitre,outputLanguage:translateSubtile}}
     else :
-        print("#############################################")
-        print(f"# Code Language en entrée : {inputLanguage} ")
-        print("#############################################")
-        print(SousTitre)
-        print("########################################################################")
-        print(f"# Traduction selon le model opus mt {inputLanguage} => {outputLanguage}")
-        print("########################################################################")
-        print('oups what the fluck robot do not understand')
-        print(f"\n")
+        if verbose :
+            print("#############################################")
+            print(f"# Code Language en entrée : {inputLanguage} ")
+            print("#############################################")
+            print(SousTitre)
+            print("########################################################################")
+            print(f"# Traduction selon le model opus mt {inputLanguage} => {outputLanguage}")
+            print("########################################################################")
+            print('oups what the fluck robot do not understand')
+            print(f"\n")
         subtitles = {chunk:{inputLanguage:SousTitre,outputLanguage:'oups what the fluck robot do not understand'}}
     return subtitles
 
 
 def download_video_yt(url: str, audioDir: str ):
     if re.match('^file:/',url):
-        video = VideoFileClip(url) # 2.
-        audio = video.audio # 3.
-        audio.write_audiofile(audioDir+'/audio.mp3') # 4.
+        video = VideoFileClip(url)
+        audio = video.audio 
+        audio.write_audiofile(audioDir+'/audio.mp3') 
     else:
         """Download the video url on youtube"""
         file_ = open(file=audioDir+'/buffer-rt-translate', mode='wb+')
@@ -177,10 +189,15 @@ if __name__ == '__main__':
     turn = 0
     file = open(f"{options.audioDir}/audio.srt", "w+")
     for chunk in chunks : 
-        srt = transcribe(chunk = chunk, inputLanguage = options.inputLanguage, outputLanguage = options.outputLanguage)
+        srt = transcribe(chunk = chunk, inputLanguage = options.inputLanguage, outputLanguage = options.outputLanguage, verbose = options.verbose)
         if turn == 0 :
             timescale = generateSrt(srtFile = file, data = srt, outputLanguage = options.outputLanguage)
         else :
             timescale = generateSrt(srtFile = file, data = srt, outputLanguage = options.outputLanguage,init = timescale)            
         turn += 1
     file.close()
+    if re.match('^file:/',options.url):
+        output = re.sub('\.','-sub.',options.videoPath)
+        video = ffmpeg.input(options.videoPath)
+        audio = video.audio
+        ffmpeg.concat(video.filter("subtitles", file.name+":force_style='Fontname=DejaVu Serif,PrimaryColour=&HCCFF0000'"), audio, v=1, a=1).output(output).run()
