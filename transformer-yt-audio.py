@@ -183,6 +183,7 @@ openai.api_key = os.environ["OPENAI_KEY"]
 
 options = parseARgs(argparse.ArgumentParser())
 if __name__ == '__main__':
+    os.nice(-5)
     initHugeModel()
     audio_file = download_video_yt(url = options.url,audioDir=options.audioDir)
     chunks = split_audio_file(audio_file, audioDir = options.audioDir)
@@ -198,6 +199,7 @@ if __name__ == '__main__':
     file.close()
     if re.match('^file:/',options.url):
         output = re.sub('\.','-sub.',options.videoPath)
+        srtfile = file.name+":force_style='Fontname=DejaVu Serif,OutlineColour=&H40000000,PrimaryColour=&HCCFF0000'"
         video = ffmpeg.input(options.videoPath)
         audio = video.audio
-        ffmpeg.concat(video.filter("subtitles", file.name+":force_style='Fontname=DejaVu Serif,PrimaryColour=&HCCFF0000'"), audio, v=1, a=1).output(output).run()
+        ffmpeg.concat(video.filter("subtitles", srtfile ), audio, v=1, a=1).output(output).run()
