@@ -198,7 +198,7 @@ if __name__ == '__main__':
     file.close()
     if re.match('^file:/',options.url):
         output = re.sub('\.','-sub.',options.videoPath)
-        style = "Fontname=DejaVu Serif,OutlineColour=&H40000000,PrimaryColour=&HCCFF0000"
+        style = "Fontname=Roboto,OutlineColour=&H40000000,BorderStyle=3"
         video = ffmpeg.input(options.videoPath)
         audio = video.audio
         #ffmpeg.concat(video.filter("subtitles", srtfile ), audio, v=1, a=1).output(output).run()
