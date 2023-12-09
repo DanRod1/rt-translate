@@ -67,6 +67,8 @@ def parseARgs(parser = None ):
                     help="repertoire Audio Cache")
     parser.add_argument("-P", "--videoPath", action="store", default = 'Video',
                     help="repertoire Video Cache")
+    parser.add_argument("-M", "--initModele", action="store_true",
+                    help="Activate local Model cache")
     args = parser.parse_args()
 
     if re.match('^file:/',args.url):
@@ -181,9 +183,11 @@ def initHugeModel():
 # CLEF OPENAI  pour accèder au service de transcription
 openai.api_key = os.environ["OPENAI_KEY"]
 
-options = parseARgs(argparse.ArgumentParser())
+options = parseARgs(argparse.ArgumentParser(description='Lance la traduction et la génération de sous-tritre d\'une vidéo local ou youtube'))
 if __name__ == '__main__':
-    initHugeModel()
+    if options.initModele :
+        initHugeModel()
+
     audio_file = download_video_yt(url = options.url,audioDir=options.audioDir)
     chunks = split_audio_file(audio_file, audioDir = options.audioDir)
     turn = 0
@@ -197,10 +201,19 @@ if __name__ == '__main__':
         turn += 1
     file.close()
     if re.match('^file:/',options.url):
+        style = "Fontname=Roboto,fontsize=10,OutlineColour=&H00CDD0DD,BorderStyle=3"
         output = re.sub('\.','-sub.',options.videoPath)
-        style = "Fontname=Roboto,OutlineColour=&H40000000,BorderStyle=3"
-        video = ffmpeg.input(options.videoPath)
-        audio = video.audio
+        audio_stream = ffmpeg.input(options.videoPath).audio 
+        video_stream = ffmpeg.input(options.videoPath).video 
+        first = (
+            ffmpeg
+            .input(options.videoPath)
+            .filter('subtitles',filename=file.name,force_style=style )
+            .output(video_stream, audio_stream,output)
+            .run(overwrite_output=True)
+        )
+        #video = ffmpeg.input(output)
         #ffmpeg.concat(video.filter("subtitles", srtfile ), audio, v=1, a=1).output(output).run()
-        #ffmpeg.concat(video.filter("subtitles", file.name ), audio, v=1, a=1).output(output).run()
-        ffmpeg.concat(video.filter('subtitles',filename=file.name,force_style=style ), audio, v=1, a=1).output(output).run()
+        #ffmpeg.concat(video.filter('subtitles',filename=file.name,force_style=style ), audio, v=1, a=1).output(output).run()
+        #ffmpeg.concat(video,first.audio).output(options.videoPath).run(overwrite_output=True)
+
