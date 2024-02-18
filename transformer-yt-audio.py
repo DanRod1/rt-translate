@@ -75,25 +75,26 @@ def parseARgs(parser = None ):
         videoPath = re.sub('^file:','',args.url)
         args.videoPath = videoPath
 
-    if args.verbose:
-        print(f"usage is transformer-yt-audio.py -v | --verbose \n")
-    else:
-        return args
+
+    return args
 
 def transcribe(chunk :str = '', inputLanguage :str = 'fr', outputLanguage :str = 'ru', verbose : bool = False):
     exclude = [ 'Merci d\'avoir regardé cette vidéo !\n',
                 'Sous-titres réalisés para la communauté d\'Amara.org\n'
               ]
-    
+    if ( os.path.isfile("/home/drodriguez/dev/Helsinki-NLP/opus-mt-"+inputLanguage+"-"+outputLanguage) ):
+      model = "Helsinki-NLP/opus-mt-"+inputLanguage+"-"+outputLanguage
+    else:
+      model= 'Helsinki-NLP/opus-mt-en-fr'
+    pipe = pipeline("translation", model=model)
     with open(chunk, "rb") as audio_file:
         SousTitre = openai.Audio.transcribe(
             file = audio_file,
-            model = "whisper-1",
+            model = 'whisper-1',
             response_format="text",
             language=inputLanguage
         )
 
-    pipe = pipeline("translation", model="Helsinki-NLP/opus-mt-"+inputLanguage+"-"+outputLanguage)
     intputText = pipe(SousTitre.lower())
     translateSubtile = unescape(intputText[0]['translation_text'])
 
@@ -179,6 +180,12 @@ def initHugeModel():
                     local_dir='/home/drodriguez/dev/opus-mt-fr-es/',
                     local_files_only=False,
                     cache_dir='/home/drodriguez/dev/opus-mt-fr-es/.cache/')
+    snapshot_download(repo_id="Helsinki-NLP/opus-mt-ar-fr", 
+                    repo_type='model',
+                    local_dir='/home/drodriguez/dev/opus-mt-ar-fr/',
+                    local_files_only=False,
+                    cache_dir='/home/drodriguez/dev/opus-mt-ar-fr/.cache/')
+    
 
 # CLEF OPENAI  pour accèder au service de transcription
 openai.api_key = os.environ["OPENAI_KEY"]
