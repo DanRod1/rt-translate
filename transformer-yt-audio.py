@@ -92,7 +92,7 @@ def transcribe(chunk :str = '', inputLanguage :str = 'fr', outputLanguage :str =
             file = audio_file,
             model = 'whisper-1',
             response_format="text",
-            language=inputLanguage
+            language=outputLanguage
         )
 
     intputText = pipe(SousTitre.lower())
