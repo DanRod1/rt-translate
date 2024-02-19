@@ -90,7 +90,7 @@ def transcribe(chunk :str = '', inputLanguage :str = 'fr', outputLanguage :str =
     with open(chunk, "rb") as audio_file:
         SousTitre = openai.Audio.transcribe(
             file = audio_file,
-            model = 'whisper-1',
+            model = 'openai/whisper-large-v3',
             response_format="text",
             language=outputLanguage
         )
@@ -190,7 +190,11 @@ def initHugeModel():
                     local_dir='/home/drodriguez/dev/opus-mt-ar-fr/',
                     local_files_only=False,
                     cache_dir='/home/drodriguez/dev/opus-mt-ar-fr/.cache/')
-    
+    snapshot_download(repo_id="openai/whisper-large-v3", 
+                    repo_type='model',
+                    local_dir='/home/drodriguez/dev/whisper-large-v3/',
+                    local_files_only=False,
+                    cache_dir='/home/drodriguez/dev/whisper-large-v3/.cache/')    
 
 # CLEF OPENAI  pour accèder au service de transcription
 openai.api_key = os.environ["OPENAI_KEY"]
