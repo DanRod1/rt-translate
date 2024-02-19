@@ -180,6 +180,11 @@ def initHugeModel():
                     local_dir='/home/drodriguez/dev/opus-mt-fr-es/',
                     local_files_only=False,
                     cache_dir='/home/drodriguez/dev/opus-mt-fr-es/.cache/')
+    snapshot_download(repo_id="Helsinki-NLP/opus-mt-es-fr", 
+                    repo_type='model',
+                    local_dir='/home/drodriguez/dev/opus-mt-es-fr/',
+                    local_files_only=False,
+                    cache_dir='/home/drodriguez/dev/opus-mt-es-fr/.cache/')
     snapshot_download(repo_id="Helsinki-NLP/opus-mt-ar-fr", 
                     repo_type='model',
                     local_dir='/home/drodriguez/dev/opus-mt-ar-fr/',
