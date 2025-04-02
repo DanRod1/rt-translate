@@ -1,5 +1,5 @@
-Audio/*
-env/*
-./venv/*
-./.env/*
-./.venv/*
+Audio/**
+env/**
+./venv/**
+./.env/**
+./.venv/**
