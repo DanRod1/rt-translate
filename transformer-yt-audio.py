@@ -131,7 +131,7 @@ def download_video_yt(url: str, audioDir: str ):
     video = VideoFileClip(url)
     audio = video.audio 
     audio.write_audiofile(audioDir+'/audio.mp3') 
-    if re.match('^file:/',url):
+    if not re.match('^file:/',url):
         """Download the video url on youtube"""
         file_ = open(file=audioDir+'/buffer-rt-translate', mode='wb+')
         try:
@@ -141,14 +141,11 @@ def download_video_yt(url: str, audioDir: str ):
         if yt.age_restricted:
             yt.bypass_age_gate()
 
-        try:
-            for key, values in yt.streams.itag_index.items() :
-                if values.is_progressive is False and values.audio_codec == 'opus' :
-                    succesAudio = yt.streams.get_by_itag(key).download(output_path=audioDir,filename='audio.mp3')
-        except:
-            succesAudio = urlretrieve(url, filename = audioDir+'/audio.mp4')
-        print(succesAudio)
-    return succesAudio
+        for key, values in yt.streams.itag_index.items() :
+            if values.is_progressive is False and values.audio_codec == 'opus' :
+                succesAudio = yt.streams.get_by_itag(key).download(output_path=audioDir,filename='audio.mp3')
+
+    return audioDir+'/audio.mp3'
 
 def split_audio_file(audio_file: str, audioDir:str) :    
     #myaudio = AudioSegment.from_file(audio_file , codec="opus") 
