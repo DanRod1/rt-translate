@@ -1,4 +1,5 @@
 Audio/**
+Video/**
 env/**
 ./venv/**
 ./.env/**
