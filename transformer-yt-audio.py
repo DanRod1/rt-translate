@@ -128,10 +128,11 @@ def transcribe(chunk :str = '', inputLanguage :str = 'fr', outputLanguage :str =
 
 def download_video_yt(url: str, audioDir: str ):
     
-    video = VideoFileClip(url)
-    audio = video.audio 
-    audio.write_audiofile(audioDir+'/audio.mp3') 
-    if not re.match('^file:/',url):
+    if re.match('^file:/',url):
+        video = VideoFileClip(url)
+        audio = video.audio 
+        audio.write_audiofile(audioDir+'/audio.mp3') 
+    else:
         """Download the video url on youtube"""
         file_ = open(file=audioDir+'/buffer-rt-translate', mode='wb+')
         try:
@@ -143,7 +144,7 @@ def download_video_yt(url: str, audioDir: str ):
 
         for key, values in yt.streams.itag_index.items() :
             if values.is_progressive is False and values.audio_codec == 'opus' :
-                succesAudio = yt.streams.get_by_itag(key).download(output_path=audioDir,filename='audio.mp3')
+                yt.streams.get_by_itag(key).download(output_path=audioDir,filename='audio.mp3')
 
     return audioDir+'/audio.mp3'
 
@@ -210,9 +211,9 @@ if __name__ == '__main__':
         turn += 1
     file.close()
     if re.match('^file:/',options.url):
-        style = "Fontname=Roboto,fontsize=25,OutlineColour=&H00CDD0DD,BorderStyle=3"
+        style = "Fontname=Roboto,fontsize=5,OutlineColour=&H00CDD0DD,BorderStyle=3"
         output = re.sub('\.','-sub.',options.videoPath)
-        audio_stream = ffmpeg.input(options.videoPath).audio 
+        audio_stream = ffmpeg.input(options.audioDir+'/audio.mp3').audio 
         video_stream = ffmpeg.input(options.videoPath).video 
         first = (
             ffmpeg
@@ -222,8 +223,16 @@ if __name__ == '__main__':
             .run(overwrite_output=True)
         )
     else:
-        video = ffmpeg.input(options.videoPath)
-        ffmpeg.concat(video.filter("subtitles", srtfile ), audio, v=1, a=1).output(output).run()
-        ffmpeg.concat(video.filter('subtitles',filename=file.name,force_style=style ), audio, v=1, a=1).output(output).run()
-        ffmpeg.concat(video,first.audio).output(options.videoPath).run(overwrite_output=True)
+        style = "Fontname=Roboto,fontsize=25,OutlineColour=&H00CDD0DD,BorderStyle=3"
+        name = re.sub('^https:\/\/(.*)\/(.*)','\2',options.url)
+        output = re.sub('\.','-sub.',name)
+        audio_stream = ffmpeg.input(options.audioDir+'/audio.mp3').audio 
+        video_stream = ffmpeg.input(f'/home/drodriguez/Vidéos/sub-{name}').video 
+        first = (
+            ffmpeg
+            .input(options.videoPath)
+            .filter('subtitles',filename=file.name,force_style=style )
+            .output(video_stream, audio_stream,output)
+            .run(overwrite_output=True)
+        )
 
