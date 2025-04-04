@@ -1,4 +1,4 @@
-from pytube import YouTube
+from pytubefix import YouTube
 from pydub import AudioSegment
 from pydub.utils import make_chunks
 from huggingface_hub import snapshot_download
@@ -7,7 +7,7 @@ from urllib.request import urlretrieve
 from transformers import pipeline
 from html import unescape
 import openai
-import os
+import os, glob
 import pyaudio
 import whisper
 import proglog
@@ -127,30 +127,43 @@ def transcribe(chunk :str = '', inputLanguage :str = 'fr', outputLanguage :str =
 
 
 def download_video_yt(url: str, audioDir: str ):
-    
+    cwd = os.getcwd()
+    stream = {}
+
     if re.match('^file:/',url):
+        url = re.sub('^(file:/)(.*)','\\2',url)
+
         video = VideoFileClip(url)
-        audio = video.audio 
-        audio.write_audiofile(audioDir+'/audio.mp3') 
+        video.audio.write_audiofile(filename=f'{audioDir}/audio.mp3')
+        stream = { 'audio': f'{audioDir}/audio.mp3', 'video': url }
     else:
         """Download the video url on youtube"""
-        file_ = open(file=audioDir+'/buffer-rt-translate', mode='wb+')
+        open(file=audioDir+'/buffer-rt-translate', mode='wb+')
         try:
-            yt = YouTube(url, use_oauth=False, allow_oauth_cache=True)
+            yt = YouTube(url)
         except:
             traceback.print_exc()
         if yt.age_restricted:
             yt.bypass_age_gate()
+        
+        for index in yt.streams.all():
+            if index.audio_codec == 'mp4a.40.2' and index.type == 'video':
+                print(index.default_filename)
+                yt.streams.get_highest_resolution().download(output_path='Video')
+                stream['Video'] = f'{cwd}/Video/{index.default_filename}'
+                break
+        for index in yt.streams.all():
+            if index.audio_codec == 'opus' and index.type == 'audio':
+                print(index.default_filename)
+                yt.streams.get_audio_only().download(output_path=f'{audioDir}')
+                stream['audio'] = f'{cwd}/{audioDir}/{index.default_filename}'
+                break
+    return stream
 
-        for key, values in yt.streams.itag_index.items() :
-            if values.is_progressive is False and values.audio_codec == 'opus' :
-                yt.streams.get_by_itag(key).download(output_path=audioDir,filename='audio.mp3')
-
-    return audioDir+'/audio.mp3'
-
-def split_audio_file(audio_file: str, audioDir:str) :    
-    #myaudio = AudioSegment.from_file(audio_file , codec="opus") 
-    myaudio = AudioSegment.from_mp3(audio_file) 
+def split_audio_file(stream: dict ) :    
+    myaudio = AudioSegment.from_file(stream['audio']) 
+    audioDir = re.sub('(.*)/(.*\.\w+)','\\1', stream['audio'] )
+    #myaudio = AudioSegment.from_mp3(audio_file)  
     chunk_length_ms = 10000 # pydub calculates in millisec
     chunks = make_chunks(myaudio, chunk_length_ms) #Make chunks of one sec
 
@@ -199,7 +212,7 @@ if __name__ == '__main__':
         initHugeModel()
 
     stream = download_video_yt(url = options.url,audioDir=options.audioDir)
-    chunks = split_audio_file(stream, audioDir = options.audioDir)
+    chunks = split_audio_file(stream)
     turn = 0
     file = open(f"{options.audioDir}/audio.srt", "w+")
     for chunk in chunks : 
@@ -210,29 +223,36 @@ if __name__ == '__main__':
             timescale = generateSrt(srtFile = file, data = srt, outputLanguage = options.outputLanguage,init = timescale)            
         turn += 1
     file.close()
+
+# Manage 2 kind Local or youtube url ( probably url globaly if metadata)    
     if re.match('^file:/',options.url):
-        style = "Fontname=Roboto,fontsize=5,OutlineColour=&H00CDD0DD,BorderStyle=3"
+        style = "OutlineColour=&H100000000,BorderStyle=3,Outline=1,Shadow=0,Fontsize=13"
         output = re.sub('\.','-sub.',options.videoPath)
         audio_stream = ffmpeg.input(options.audioDir+'/audio.mp3').audio 
         video_stream = ffmpeg.input(options.videoPath).video 
         first = (
             ffmpeg
             .input(options.videoPath)
+            .filter('scale', size='hd1080', force_original_aspect_ratio='increase')
             .filter('subtitles',filename=file.name,force_style=style )
             .output(video_stream, audio_stream,output)
             .run(overwrite_output=True)
         )
+        os.remove(options.videoPath)
     else:
-        style = "Fontname=Roboto,fontsize=25,OutlineColour=&H00CDD0DD,BorderStyle=3"
-        name = re.sub('^https:\/\/(.*)\/(.*)','\2',options.url)
-        output = re.sub('\.','-sub.',name)
-        audio_stream = ffmpeg.input(options.audioDir+'/audio.mp3').audio 
-        video_stream = ffmpeg.input(f'/home/drodriguez/Vidéos/sub-{name}').video 
+        style = "OutlineColour=&H100000000,BorderStyle=3,Outline=1,Shadow=0,Fontsize=13"
+        output = re.sub('\.','-sub.',stream['Video'])
+        audio_stream = ffmpeg.input(stream['audio']).audio 
+        video_stream = ffmpeg.input(stream['Video']).video
+
         first = (
             ffmpeg
-            .input(options.videoPath)
+            .input(stream['Video'])
+            .filter('scale', size='hd1080', force_original_aspect_ratio='increase')
             .filter('subtitles',filename=file.name,force_style=style )
             .output(video_stream, audio_stream,output)
             .run(overwrite_output=True)
         )
+    for f in glob.glob(f'{options.audioDir}/chunk*.mp3'):
+        os.remove(f)
 
