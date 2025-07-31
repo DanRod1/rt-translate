@@ -68,6 +68,9 @@ def parseARgs(parser = None ):
                     help="repertoire Video Cache")
     parser.add_argument("-M", "--initModele", action="store_true",
                     help="Activate local Model cache")
+    parser.add_argument("-n", "--nameModel", action="store", default="Helsinki-NLP/opus-mt-fr-ru",
+                    help="Model name")
+
     args = parser.parse_args()
 
     if re.match('^file:/',args.url):
@@ -93,7 +96,7 @@ def transcribe(chunk :str = '', inputLanguage :str = 'fr', outputLanguage :str =
             file = audio_file,
             model = 'whisper-1',
             response_format="text",
-            language=inputLanguage
+            language=outputLanguage
         )
 
     intputText = pipe(SousTitre.lower())
@@ -201,6 +204,11 @@ def initHugeModel():
                     local_dir='/home/drodriguez/dev/opus-mt-ar-fr/',
                     local_files_only=False,
                     cache_dir='/home/drodriguez/dev/opus-mt-ar-fr/.cache/')
+    snapshot_download(repo_id="Helsinki-NLP/opus-mt-tc-bible-big-afa-deu_eng_fra_por_spa",
+                    repo_type='model',
+                    local_dir='/home/drodriguez/dev/opus-mt-fra_eng_spa-fr/',
+                    local_files_only=False,
+                    cache_dir='/home/drodriguez/dev/opus-mt-fra_eng_spa-fr/.cache/')
     
 
 # CLEF OPENAI  pour accèder au service de transcription
@@ -231,12 +239,13 @@ if __name__ == '__main__':
         audio_stream = ffmpeg.input(options.audioDir+'/audio.mp3').audio 
         video_stream = ffmpeg.input(options.videoPath).video 
         first = (
-            ffmpeg
-            .input(options.videoPath)
-            .filter('scale', size='hd1080', force_original_aspect_ratio='increase')
-            .filter('subtitles',filename=file.name,force_style=style )
-            .output(video_stream, audio_stream,output)
-            .run(overwrite_output=True)
+                ffmpeg
+                .input(options.videoPath)
+                .filter('scale', 'trunc(iw/2)*2', 'trunc(ih/2)*2')
+                .filter('subtitles',filename=file.name,force_style=style)
+                .filter('drawtext', text='%{subtitle}', x='(w-text_w)/2', y='h-100', fontsize=24, fontcolor='white', shadowcolor='black', shadowx=2, shadowy=2)
+                .output(video_stream, audio_stream,output,vcodec='libx264')
+                .run(overwrite_output=True)
         )
         os.remove(options.videoPath)
     else:
@@ -248,9 +257,10 @@ if __name__ == '__main__':
         first = (
             ffmpeg
             .input(stream['Video'])
-            .filter('scale', size='hd1080', force_original_aspect_ratio='increase')
             .filter('subtitles',filename=file.name,force_style=style )
-            .output(video_stream, audio_stream,output)
+            .filter('scale', 'trunc(iw/2)*2', 'trunc(ih/2)*2')
+            .filter('drawtext', text='%{subtitle}', x='(w-text_w)/2', y='h-100', fontsize=24, fontcolor='white', shadowcolor='black', shadowx=2, shadowy=2)
+            .output(video_stream, audio_stream,output,vcodec='libx264',)
             .run(overwrite_output=True)
         )
     for f in glob.glob(f'{options.audioDir}/chunk*.mp3'):
