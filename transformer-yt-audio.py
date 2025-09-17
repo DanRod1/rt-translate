@@ -89,7 +89,7 @@ def transcribe(chunk :str = '', inputLanguage :str = 'fr', outputLanguage :str =
     if ( os.path.isfile("/home/drodriguez/dev/Helsinki-NLP/opus-mt-"+inputLanguage+"-"+outputLanguage) ):
       model = "Helsinki-NLP/opus-mt-"+inputLanguage+"-"+outputLanguage
     else:
-      model= 'Helsinki-NLP/opus-mt-en-fr'
+      model= "Helsinki-NLP/opus-mt-en-fr"
     pipe = pipeline("translation", model=model)
     with open(chunk, "rb") as audio_file:
         SousTitre = openai.Audio.transcribe(
@@ -204,12 +204,11 @@ def initHugeModel():
                     local_dir='/home/drodriguez/dev/opus-mt-ar-fr/',
                     local_files_only=False,
                     cache_dir='/home/drodriguez/dev/opus-mt-ar-fr/.cache/')
-    snapshot_download(repo_id="Helsinki-NLP/opus-mt-tc-bible-big-afa-deu_eng_fra_por_spa",
+    snapshot_download(repo_id="Helsinki-NLP/opus-mt-en-fr", 
                     repo_type='model',
-                    local_dir='/home/drodriguez/dev/opus-mt-fra_eng_spa-fr/',
+                    local_dir='/home/drodriguez/dev/opus-mt-en-fr/',
                     local_files_only=False,
-                    cache_dir='/home/drodriguez/dev/opus-mt-fra_eng_spa-fr/.cache/')
-    
+                    cache_dir='/home/drodriguez/dev/opus-mt-en-fr/.cache/')
 
 # CLEF OPENAI  pour accèder au service de transcription
 openai.api_key = os.environ["OPENAI_KEY"]
