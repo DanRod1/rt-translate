@@ -230,9 +230,15 @@ if __name__ == '__main__':
     for chunk in chunks : 
         srt = transcribe(chunk = chunk, inputLanguage = options.inputLanguage, outputLanguage = options.outputLanguage, verbose = options.verbose)
         if turn == 0 :
-            timescale = generateSrt(srtFile = file, data = srt, outputLanguage = options.outputLanguage)
+            if options.inputLanguage == "es" and options.outputLanguage == "en":
+                timescale = generateSrt(srtFile = file, data = srt, outputLanguage = options.inputLanguage)
+            else:
+                timescale = generateSrt(srtFile = file, data = srt, outputLanguage = options.outputLanguage)
         else :
-            timescale = generateSrt(srtFile = file, data = srt, outputLanguage = options.outputLanguage,init = timescale)            
+            if options.inputLanguage == "es" and options.outputLanguage == "en":
+                timescale = generateSrt(srtFile = file, data = srt, outputLanguage = options.inputLanguage,init = timescale)
+            else:
+                timescale = generateSrt(srtFile = file, data = srt, outputLanguage = options.outputLanguage,init = timescale)           
         turn += 1
     file.close()
 
