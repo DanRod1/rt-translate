@@ -209,6 +209,11 @@ def initHugeModel():
                     local_dir='/home/drodriguez/dev/opus-mt-en-fr/',
                     local_files_only=False,
                     cache_dir='/home/drodriguez/dev/opus-mt-en-fr/.cache/')
+    snapshot_download(repo_id="Helsinki-NLP/opus-mt-es-en", 
+                    repo_type='model',
+                    local_dir='/home/drodriguez/dev/opus-mt-es-en/',
+                    local_files_only=False,
+                    cache_dir='/home/drodriguez/dev/opus-mt-es-en/.cache/')
 
 # CLEF OPENAI  pour accèder au service de transcription
 openai.api_key = os.environ["OPENAI_KEY"]
