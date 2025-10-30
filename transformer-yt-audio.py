@@ -182,38 +182,42 @@ def split_audio_file(stream: dict ) :
 def initHugeModel():
 # Donwload du model OPUSMT
     disable_progress_bars()
-    snapshot_download(repo_id="Helsinki-NLP/opus-mt-en-ru", 
+    snapshot_download(repo_id="Helsinki-NLP/Helsinki-NLP/opus-mt-en-ru", 
                     repo_type='model',
-                    local_dir='/home/drodriguez/dev/opus-mt-fr-ru/',
+                    local_dir='/home/drodriguez/dev/Helsinki-NLP/opus-mt-fr-ru/',
                     local_files_only=False,
-                    cache_dir='/home/drodriguez/dev/opus-mt-fr-ru/.cache/')
-
-    snapshot_download(repo_id="Helsinki-NLP/opus-mt-ru-hy", 
+                    cache_dir='/home/drodriguez/dev/Helsinki-NLP/opus-mt-fr-ru/.cache/')
+    snapshot_download(repo_id="Helsinki-NLP/Helsinki-NLP/opus-mt-ru-hy", 
                     repo_type='model',
-                    local_dir='/home/drodriguez/dev/opus-mt-ru-hy/',
+                    local_dir='/home/drodriguez/dev/Helsinki-NLP/opus-mt-ru-hy/',
                     local_files_only=False,
-                    cache_dir='/home/drodriguez/dev/opus-mt-ru-hy/.cache/')
-
+                    cache_dir='/home/drodriguez/dev/Helsinki-NLP/opus-mt-ru-hy/.cache/')
     snapshot_download(repo_id="Helsinki-NLP/opus-mt-fr-es", 
                     repo_type='model',
-                    local_dir='/home/drodriguez/dev/opus-mt-fr-es/',
+                    local_dir='/home/drodriguez/dev/Helsinki-NLP/opus-mt-fr-es/',
                     local_files_only=False,
-                    cache_dir='/home/drodriguez/dev/opus-mt-fr-es/.cache/')
+                    cache_dir='/home/drodriguez/dev/Helsinki-NLP/opus-mt-fr-es/.cache/')
+    snapshot_download(repo_id="Helsinki-NLP/opus-mt-es-fr", 
+                    repo_type='model',
+                    local_dir='/home/drodriguez/dev/Helsinki-NLP/opus-mt-es-fr/',
+                    local_files_only=False,
+                    cache_dir='/home/drodriguez/dev/Helsinki-NLP/opus-mt-es-fr/.cache/')
     snapshot_download(repo_id="Helsinki-NLP/opus-mt-ar-fr", 
                     repo_type='model',
                     local_dir='/home/drodriguez/dev/opus-mt-ar-fr/',
                     local_files_only=False,
                     cache_dir='/home/drodriguez/dev/opus-mt-ar-fr/.cache/')
-    snapshot_download(repo_id="Helsinki-NLP/opus-mt-en-fr", 
-                    repo_type='model',
-                    local_dir='/home/drodriguez/dev/opus-mt-en-fr/',
-                    local_files_only=False,
-                    cache_dir='/home/drodriguez/dev/opus-mt-en-fr/.cache/')
-    snapshot_download(repo_id="Helsinki-NLP/opus-mt-es-en", 
-                    repo_type='model',
-                    local_dir='/home/drodriguez/dev/opus-mt-es-en/',
-                    local_files_only=False,
-                    cache_dir='/home/drodriguez/dev/opus-mt-es-en/.cache/')
+    snapshot_download(repo_id="Systran/faster-whisper-large-v3", 
+            repo_type='model',
+            local_dir='/home/drodriguez/dev/whisper-large-v3',
+            local_files_only=False,
+            cache_dir='/home/drodriguez/dev/whisper-large-v3/.cache/')
+    snapshot_download(repo_id="facebook/seamless-m4t-v2-large", 
+            repo_type='model',
+            local_dir='/home/drodriguez/dev/facebook/seamless-m4t-v2-large',
+            local_files_only=False,
+            cache_dir='/home/drodriguez/dev/facebook/seamless-m4t-v2-large/.cache/')
+
 
 # CLEF OPENAI  pour accèder au service de transcription
 openai.api_key = os.environ["OPENAI_KEY"]
@@ -228,51 +232,56 @@ if __name__ == '__main__':
     turn = 0
     file = open(f"{options.audioDir}/audio.srt", "w+")
     for chunk in chunks : 
+        size_bytes = os.path.getsize(chunk)
+        size_kb = size_bytes / 1024
+        print(f'{chunk}')
+        if size_bytes < 100: next
+
         srt = transcribe(chunk = chunk, inputLanguage = options.inputLanguage, outputLanguage = options.outputLanguage, verbose = options.verbose)
         if turn == 0 :
-            if options.inputLanguage == "es" and options.outputLanguage == "en":
-                timescale = generateSrt(srtFile = file, data = srt, outputLanguage = options.inputLanguage)
-            else:
-                timescale = generateSrt(srtFile = file, data = srt, outputLanguage = options.outputLanguage)
+            timescale = generateSrt(srtFile = file, data = srt, outputLanguage = options.inputLanguage)
         else :
-            if options.inputLanguage == "es" and options.outputLanguage == "en":
-                timescale = generateSrt(srtFile = file, data = srt, outputLanguage = options.inputLanguage,init = timescale)
-            else:
-                timescale = generateSrt(srtFile = file, data = srt, outputLanguage = options.outputLanguage,init = timescale)           
+            timescale = generateSrt(srtFile = file, data = srt, outputLanguage = options.inputLanguage,init = timescale)            
         turn += 1
     file.close()
 
-# Manage 2 kind Local or youtube url ( probably url globaly if metadata)    
+    width=800
+    height=600
+    # Manage 2 kind Local or youtube url ( probably url globaly if metadata)    
+    scale_expr_w = f"iw*min({width}/iw\\,{height}/ih)"
+    scale_expr_h = f"ih*min({width}/iw\\,{height}/ih)"
+
+    # pad: centre sur la toile cible
+    pad_x = f"({width}-iw)/2"
+    pad_y = f"({height}-ih)/2"
     if re.match('^file:/',options.url):
         style = "OutlineColour=&H100000000,BorderStyle=3,Outline=1,Shadow=0,Fontsize=13"
         output = re.sub('\.','-sub.',options.videoPath)
         audio_stream = ffmpeg.input(options.audioDir+'/audio.mp3').audio 
         video_stream = ffmpeg.input(options.videoPath).video 
-        first = (
-                ffmpeg
-                .input(options.videoPath)
-                .filter('scale', 'trunc(iw/2)*2', 'trunc(ih/2)*2')
-                .filter('subtitles',filename=file.name,force_style=style)
-                .filter('drawtext', text='%{subtitle}', x='(w-text_w)/2', y='h-100', fontsize=24, fontcolor='white', shadowcolor='black', shadowx=2, shadowy=2)
-                .output(video_stream, audio_stream,output,vcodec='libx264')
-                .run(overwrite_output=True)
-        )
-        os.remove(options.videoPath)
     else:
         style = "OutlineColour=&H100000000,BorderStyle=3,Outline=1,Shadow=0,Fontsize=13"
         output = re.sub('\.','-sub.',stream['Video'])
         audio_stream = ffmpeg.input(stream['audio']).audio 
         video_stream = ffmpeg.input(stream['Video']).video
 
-        first = (
+    first = (
             ffmpeg
-            .input(stream['Video'])
-            .filter('subtitles',filename=file.name,force_style=style )
-            .filter('scale', 'trunc(iw/2)*2', 'trunc(ih/2)*2')
-            .filter('drawtext', text='%{subtitle}', x='(w-text_w)/2', y='h-100', fontsize=24, fontcolor='white', shadowcolor='black', shadowx=2, shadowy=2)
-            .output(video_stream, audio_stream,output,vcodec='libx264',)
+            .input(options.videoPath)
+            .filter('scale', width, height )
+            .filter(
+                "pad",
+                "iw",             # largeur = largeur d’origine → pas de pad à gauche/droite
+                f"ih+250",  # on ajoute du pad en bas
+                0,                # x=0 → aligné à gauche
+                0,                # y=0 → contenu collé en haut
+                color="black"     # couleur du pad
+            )
+            .filter('subtitles',filename=file.name,force_style=style)
+            .output(video_stream, audio_stream,output,vcodec='libx264')
             .run(overwrite_output=True)
-        )
+    )
+
     for f in glob.glob(f'{options.audioDir}/chunk*.mp3'):
         os.remove(f)
 
