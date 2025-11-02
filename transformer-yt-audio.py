@@ -6,10 +6,12 @@ from huggingface_hub.utils import are_progress_bars_disabled, disable_progress_b
 from urllib.request import urlretrieve
 from transformers import pipeline
 from html import unescape
-import openai
+from openai import OpenAI
 import os, glob
+
+client = OpenAI(api_key=os.environ["OPENAI_KEY"])
 import pyaudio
-import whisper
+from faster_whisper import WhisperModel
 import proglog
 import traceback
 import argparse
@@ -17,8 +19,10 @@ import re
 from datetime import timedelta
 from moviepy import VideoFileClip
 import ffmpeg
+import ctranslate2
 
 def generateSrt(srtFile: any , data :dict = {}, outputLanguage :str = '', init: list = ['00','00','00,000'], verbose :bool = False):
+    returnValue = list()
     for keys in data :
         pattern = '\d+'
         result = re.search(pattern=pattern,string=keys) 
@@ -30,7 +34,6 @@ def generateSrt(srtFile: any , data :dict = {}, outputLanguage :str = '', init: 
         if verbose : print(f'{init}')
         srtFile.write(f'{":".join(init)} --> ')
         count = 0
-        returnValue = []
         for unit in end :
             if len(str(unit)) == 1 :
                 tmp = '0{unit}'.format(unit=unit)
@@ -47,10 +50,7 @@ def generateSrt(srtFile: any , data :dict = {}, outputLanguage :str = '', init: 
         returnValue = init
         srtFile.write(f' \n')
         srtFile.write(f'{data[keys][outputLanguage]}\n')
-        if verbose :
-            print(f'{returnValue}') 
-        else :
-            print(f'in progress')    
+        print(f'in progress {data}')    
     return returnValue
 
 def parseARgs(parser = None ):
@@ -86,46 +86,63 @@ def transcribe(chunk :str = '', inputLanguage :str = 'fr', outputLanguage :str =
     exclude = [ 'Merci d\'avoir regardé cette vidéo !\n',
                 'Sous-titres réalisés para la communauté d\'Amara.org\n'
               ]
-    if ( os.path.isfile("/home/drodriguez/dev/Helsinki-NLP/opus-mt-"+inputLanguage+"-"+outputLanguage) ):
-      model = "Helsinki-NLP/opus-mt-"+inputLanguage+"-"+outputLanguage
-    else:
-      model= "Helsinki-NLP/opus-mt-en-fr"
-    pipe = pipeline("translation", model=model)
-    with open(chunk, "rb") as audio_file:
-        SousTitre = openai.Audio.transcribe(
-            file = audio_file,
-            model = 'whisper-1',
-            response_format="text",
-            language=outputLanguage
-        )
+    intputText = ''
+    translateSubtile = ''
+    subtitles = dict()
+    # client = OpenAI(api_key="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")
+    device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
+    supported = ctranslate2.get_supported_compute_types(device)
+    for pref in ("float16","int8_float16","bfloat16","int8","int8_float32","float32"):
+        if pref in supported:
+            compute = pref; break
+    model = WhisperModel("Systran/faster-whisper-large-v3", device=device, compute_type=compute)        
+    # --- transcribe
+    segments, info = model.transcribe(
+        chunk,
+        chunk_length=10,
+        language=inputLanguage,
+        temperature=0.0,
+        patience=0.2,
+        beam_size=5,
+        condition_on_previous_text=False,
+        vad_filter=True
+    )
+    segment = list(segments)
+    subtitles = {chunk:{inputLanguage:'...',outputLanguage:'...'}}
+    for s in segment:
+        model_name = "Helsinki-NLP/opus-mt-"+inputLanguage+"-"+outputLanguage
+        # Step 2: Text-to-text (Marian)
+        translator = pipeline("translation", model=model_name)
+        # Translate
+        translation = translator(s.text)[0]["translation_text"]
 
-    intputText = pipe(SousTitre.lower())
-    translateSubtile = unescape(intputText[0]['translation_text'])
+        intputText = s.text 
+        translateSubtile = unescape(translation)
 
-    if SousTitre not in exclude :
-        if verbose :
-            print("#############################################")
-            print(f"# Code Language en entrée : {inputLanguage} ")
-            print("#############################################")
-            print(SousTitre)
-            print("########################################################################")
-            print(f"# Traduction selon le model opus mt {inputLanguage} => {outputLanguage}")
-            print("########################################################################")
-            print(translateSubtile)
-            print(f"\n")
-        subtitles = {chunk:{inputLanguage:SousTitre,outputLanguage:translateSubtile}}
-    else :
-        if verbose :
-            print("#############################################")
-            print(f"# Code Language en entrée : {inputLanguage} ")
-            print("#############################################")
-            print(SousTitre)
-            print("########################################################################")
-            print(f"# Traduction selon le model opus mt {inputLanguage} => {outputLanguage}")
-            print("########################################################################")
-            print('oups what the fluck robot do not understand')
-            print(f"\n")
-        subtitles = {chunk:{inputLanguage:SousTitre,outputLanguage:'oups what the fluck robot do not understand'}}
+        if intputText not in exclude :
+            if verbose :
+                print("#############################################")
+                print(f"# Code Language en entrée : {inputLanguage} ")
+                print("#############################################")
+                print(intputText)
+                print("########################################################################")
+                print(f"# Traduction selon le model opus mt {inputLanguage} => {outputLanguage}")
+                print("########################################################################")
+                print(translateSubtile)
+                print(f"\n")
+            subtitles = {chunk:{inputLanguage:intputText,outputLanguage:translateSubtile}}
+        else :
+            if verbose :
+                print("#############################################")
+                print(f"# Code Language en entrée : {inputLanguage} ")
+                print("#############################################")
+                print(intputText)
+                print("########################################################################")
+                print(f"# Traduction selon le model opus mt {inputLanguage} => {outputLanguage}")
+                print("########################################################################")
+                print('oups what the fluck robot do not understand')
+                print(f"\n")
+            subtitles = {chunk:{inputLanguage:intputText,outputLanguage:'oups what the fluck robot do not understand'}}
     return subtitles
 
 
@@ -148,7 +165,7 @@ def download_video_yt(url: str, audioDir: str ):
             traceback.print_exc()
         if yt.age_restricted:
             yt.bypass_age_gate()
-        
+
         for index in yt.streams.all():
             if index.audio_codec == 'mp4a.40.2' and index.type == 'video':
                 print(index.default_filename)
@@ -182,12 +199,17 @@ def split_audio_file(stream: dict ) :
 def initHugeModel():
 # Donwload du model OPUSMT
     disable_progress_bars()
-    snapshot_download(repo_id="Helsinki-NLP/Helsinki-NLP/opus-mt-en-ru", 
+    snapshot_download(repo_id="Helsinki-NLP/opus-mt-en-ru", 
                     repo_type='model',
                     local_dir='/home/drodriguez/dev/Helsinki-NLP/opus-mt-fr-ru/',
                     local_files_only=False,
                     cache_dir='/home/drodriguez/dev/Helsinki-NLP/opus-mt-fr-ru/.cache/')
-    snapshot_download(repo_id="Helsinki-NLP/Helsinki-NLP/opus-mt-ru-hy", 
+    snapshot_download(repo_id="Helsinki-NLP/opus-mt-en-fr", 
+                    repo_type='model',
+                    local_dir='/home/drodriguez/dev/Helsinki-NLP/opus-mt-en-fr/',
+                    local_files_only=False,
+                    cache_dir='/home/drodriguez/dev/Helsinki-NLP/opus-mt-en-fr/.cache/')
+    snapshot_download(repo_id="Helsinki-NLP/opus-mt-ru-hy", 
                     repo_type='model',
                     local_dir='/home/drodriguez/dev/Helsinki-NLP/opus-mt-ru-hy/',
                     local_files_only=False,
@@ -212,15 +234,9 @@ def initHugeModel():
             local_dir='/home/drodriguez/dev/whisper-large-v3',
             local_files_only=False,
             cache_dir='/home/drodriguez/dev/whisper-large-v3/.cache/')
-    snapshot_download(repo_id="facebook/seamless-m4t-v2-large", 
-            repo_type='model',
-            local_dir='/home/drodriguez/dev/facebook/seamless-m4t-v2-large',
-            local_files_only=False,
-            cache_dir='/home/drodriguez/dev/facebook/seamless-m4t-v2-large/.cache/')
 
 
 # CLEF OPENAI  pour accèder au service de transcription
-openai.api_key = os.environ["OPENAI_KEY"]
 
 options = parseARgs(argparse.ArgumentParser(description='Lance la traduction et la génération de sous-tritre d\'une vidéo local ou youtube'))
 if __name__ == '__main__':
