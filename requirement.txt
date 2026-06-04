@@ -1,0 +1,7 @@
+numpy>=1.26
+soundfile>=0.12
+phonemizer>=3.2
+transformers>=4.40
+torch>=2.2
+sentencepiece
+demucs>=4.0

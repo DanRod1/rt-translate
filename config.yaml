@@ -1,0 +1,47 @@
+youtube_url: "https://youtu.be/5R4UFJG5vTE"
+
+mulan_file: "./lyrics.mulan"
+
+languages:
+  - es
+  - fr
+  - en
+
+output_dir: "./out"
+
+alignment:
+  max_distance_ratio: 0.05
+  search_window: 12
+  insert_missing_between_matches: true
+
+subtitle_stack:
+  enabled: true
+  max_lines: 3
+  min_duration: 0.15
+
+translation:
+  enabled: true
+  source_language: "fr"
+  target_language: "en"
+  model_path: "/home/drodriguez/dev/opus-mt-fr-en"
+  local_files_only: true
+  device: cpu
+  skip_if_target_detected: true
+  max_length: 256
+  num_beams: 1
+  device: "cpu"
+  log_progress: true
+
+youtube_download:
+  enabled: true
+  format: "bv*[height<=720]+ba/b[height<=720]/best"
+  cookies_from_browser: "chrome"
+  cookies: ""
+  remote_components: "ejs:github"
+  no_check_certificate: false
+
+burn:
+  enabled: true
+  # Si la vidéo YouTube n'est pas récupérable par yt-dlp, renseigner une vidéo locale ici.
+  input_video: "/home/drodriguez/Vidéos/rmc.mp4"
+  output_video: "./out/video_subtitled.mp4"
