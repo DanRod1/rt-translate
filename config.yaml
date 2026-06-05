@@ -10,11 +10,14 @@ languages:
 output_dir: "./out"
 
 alignment:
-  max_distance_ratio: 0.10
-  search_window: 12
+  merged_fix_max_group_gap: 1.25
+  merged_fix_min_group_segments: 3
+  merged_fix_duration_factor: 1.8
+  max_distance_ratio: 0.05
+  search_window: 3
   insert_missing_between_matches: true
-  max_merged_chars: 90
-  max_missing_lines: 2
+  max_merged_chars: 42
+  max_missing_lines: 1
 
 ass:
   play_res_x: 1920

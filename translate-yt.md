@@ -1,557 +1,654 @@
-# Documentation `config.yaml`
+# Documentation — Pipeline Mulan / YouTube ASR vers ASS
 
-Ce fichier configure le pipeline :
+## 1. Objectif
 
-YouTube ASR → alignement Mulan → ajustement timeline → traduction optionnelle → génération SRT/TXT/debug → burn vidéo optionnel.
+Ce script génère un fichier de sous-titres **ASS** à partir de deux sources :
 
-## Exemple complet
+1. une transcription YouTube ASR récupérée via `youtube_transcript_api` ;
+2. un fichier texte Mulan contenant le texte de référence.
 
-```yaml
-youtube_url: "https://www.youtube.com/watch?v=XXXXXXXXXXX"
-mulan_file: "./mulan.txt"
-languages: ["fr", "en"]
-output_dir: "./out"
+Le but est de produire des sous-titres plus propres que l'ASR brut, avec :
 
-alignment:
-  max_distance_ratio: 0.15
-  search_window: 20
-  insert_missing_between_matches: true
+- alignement du texte Mulan sur les timestamps YouTube ;
+- traduction locale optionnelle ;
+- sortie au format `.ass` ;
+- gestion des chevauchements par position verticale ;
+- limitation du nombre de caractères par ligne ;
+- correction des gros blocs fusionnés générés par certains alignements ;
+- burn vidéo optionnel via FFmpeg.
 
-subtitle_stack:
-  enabled: true
-  max_lines: 3
-  min_duration: 0.15
+---
 
-translation:
-  enabled: true
-  source_language: fr
-  target_language: en
-  model_path: /home/drodriguez/dev/opus-mt-fr-en
-  local_files_only: true
-  device: cpu
-  num_beams: 1
-  max_length: 256
-  log_progress: true
-  skip_if_target_detected: true
+## 2. Pourquoi ASS au lieu de SRT
 
-youtube_download:
-  enabled: false
-  cookies_from_browser: chrome
-  remote_components: ejs:github
-  format: "bv*[height<=720]+ba/b[height<=720]/best"
-  no_check_certificate: false
+Le format SRT est limité :
 
-burn:
-  enabled: false
-  input_video: ""
-  output_video: ""
+- pas de vraie notion de position verticale par événement ;
+- pas de styles avancés ;
+- pas de contrôle fiable des sous-titres simultanés ;
+- comportement variable selon les lecteurs.
+
+Le format ASS permet :
+
+- `MarginV` pour positionner verticalement les sous-titres ;
+- `Style` pour définir police, taille, contour, alignement ;
+- `Layer` pour définir la priorité de rendu ;
+- événements simultanés ;
+- sauts de ligne explicites via `\N`.
+
+Dans ce projet, ASS est utilisé pour éviter de reconstruire artificiellement des blocs multi-lignes comme en SRT.
+
+---
+
+## 3. Pipeline global
+
+```text
+config.yaml
+   ↓
+lecture URL YouTube + fichier Mulan
+   ↓
+récupération transcript YouTube ASR
+   ↓
+chargement lignes Mulan
+   ↓
+alignement Mulan ↔ ASR par distance de caractères
+   ↓
+application des offsets/durées Mulan
+   ↓
+traduction optionnelle
+   ↓
+correction des blocs fusionnés
+   ↓
+limitation des caractères par ligne
+   ↓
+assignation des pistes verticales ASS
+   ↓
+écriture .ass / .txt / debug.tsv
+   ↓
+burn vidéo optionnel
 ```
 
 ---
 
-# Paramètres racine
+## 4. Structure des segments
 
-## `youtube_url`
+Le script manipule des objets `CaptionSegment`.
 
-URL YouTube ou identifiant vidéo YouTube.
+```python
+@dataclass
+class CaptionSegment:
+    start: float
+    duration: float
+    text: str
+    source_text: str = ""
+    distance_ratio: float = 1.0
+    mulan_index: int = -1
+    inserted: bool = False
+```
 
-Exemples :
+### Champs
+
+| Champ | Rôle |
+|---|---|
+| `start` | Début du segment en secondes |
+| `duration` | Durée du segment en secondes |
+| `text` | Texte final du sous-titre |
+| `source_text` | Texte ASR source utilisé pour debug |
+| `distance_ratio` | Distance normalisée entre ASR et Mulan |
+| `mulan_index` | Index de la ligne Mulan alignée |
+| `inserted` | Indique si le segment a été inséré artificiellement |
+
+---
+
+## 5. Chargement du fichier Mulan
+
+Le fichier Mulan est lu ligne par ligne.
+
+Les formats acceptés sont :
+
+```text
+Texte simple
+text=Texte
+lyric=Texte
+line=Texte
+fragment=Texte
+colonne1|colonne2|Texte
+colonne1<TAB>colonne2<TAB>Texte
+```
+
+Les lignes ignorées :
+
+```text
+# commentaire
+// commentaire
+ligne vide
+```
+
+Le nettoyage retire :
+
+- balises `<...>` ;
+- blocs `[...]` ;
+- blocs `{...}` ;
+- espaces multiples.
+
+---
+
+## 6. Métadonnées inline Mulan
+
+Le script supporte des métadonnées entre parenthèses :
+
+```text
+(Texte -- dure: 2.5)
+(Texte -- dure: +0.4)
+(Texte -- dure: -0.2)
+```
+
+### Interprétation
+
+| Forme | Effet |
+|---|---|
+| `dure: 2.5` | force une durée explicite de 2.5 secondes |
+| `dure: +0.4` | ajoute un offset cumulatif de +0.4 seconde |
+| `dure: -0.2` | ajoute un offset cumulatif de -0.2 seconde |
+
+Les offsets sont cumulés selon l'ordre des lignes Mulan.
+
+---
+
+## 7. Alignement Mulan ↔ ASR
+
+L'alignement se fait par distance de Levenshtein normalisée.
+
+Le texte est normalisé :
+
+- passage en minuscules ;
+- retrait de ponctuation ;
+- conservation des caractères accentués ;
+- suppression des espaces.
+
+La distance est calculée ainsi :
+
+```python
+distance = levenshtein(normalized_asr, normalized_mulan) / max_length
+```
+
+Un match est accepté si :
 
 ```yaml
-youtube_url: "https://www.youtube.com/watch?v=XXXXXXXXXXX"
+distance <= alignment.max_distance_ratio
+```
+
+Par défaut :
+
+```yaml
+max_distance_ratio: 0.10
+```
+
+---
+
+## 8. Fenêtre de recherche
+
+Pour chaque segment ASR, le script cherche une correspondance Mulan dans une fenêtre limitée.
+
+```yaml
+alignment:
+  search_window: 12
+```
+
+Cela veut dire :
+
+```text
+chercher parmi les 12 prochaines lignes Mulan à partir du curseur courant
+```
+
+Cette stratégie évite de réaligner trop loin dans le texte, mais peut échouer si le texte Mulan diverge fortement de l'ASR.
+
+---
+
+## 9. Gestion des lignes Mulan manquantes
+
+Quand le script trouve un match Mulan plus loin que le curseur courant, il y a des lignes Mulan intermédiaires non alignées.
+
+Ancienne logique problématique :
+
+```text
+créer des segments artificiels avant le match
+```
+
+Cela provoquait des chevauchements.
+
+Nouvelle logique :
+
+```text
+fusionner seulement quelques lignes manquantes dans le segment matché
+```
+
+La fusion est limitée par :
+
+```yaml
+alignment:
+  max_merged_chars: 90
+  max_missing_lines: 2
+```
+
+### Effet
+
+Si Mulan contient :
+
+```text
+ligne A
+ligne B
+ligne C
+```
+
+et que `ligne C` est matchée avec l'ASR, alors le script peut produire :
+
+```text
+ligne B ligne C
 ```
 
 ou :
 
-```yaml
-youtube_url: "XXXXXXXXXXX"
+```text
+ligne A ligne B ligne C
 ```
 
-Obligatoire.
+mais seulement si les limites `max_merged_chars` et `max_missing_lines` le permettent.
 
 ---
 
-## `mulan_file`
+## 10. Pourquoi limiter les merges
 
-Chemin vers le fichier texte Mulan servant de référence textuelle.
-
-```yaml
-mulan_file: "./mulan.txt"
-```
-
-Obligatoire.
-
-Le fichier Mulan sert uniquement de référence textuelle et de support de corrections. Il ne remplace pas directement la timeline YouTube.
-
----
-
-## `languages`
-
-Liste des langues à demander à `youtube_transcript_api`.
-
-```yaml
-languages: ["fr", "en"]
-```
-
-Le script essaie de récupérer une transcription YouTube dans cet ordre.
-
-Exemples :
-
-```yaml
-languages: ["fr"]
-```
-
-```yaml
-languages: ["es", "fr", "en"]
-```
-
----
-
-## `output_dir`
-
-Répertoire de sortie.
-
-```yaml
-output_dir: "./out"
-```
-
-Le script génère notamment :
+Une fusion illimitée peut produire de très gros blocs :
 
 ```text
-out/<video_id>.mulan.srt
-out/<video_id>.mulan.txt
-out/<video_id>.debug.tsv
+phrase 1 phrase 2 phrase 3 phrase 4 phrase 5 phrase 6 ...
 ```
 
-Si la traduction est activée :
+Ce type de bloc est difficile à lire et perturbe ensuite :
 
-```text
-out/<video_id>.translated.srt
-out/<video_id>.translated.txt
-out/<video_id>.debug.tsv
+- le wrapping ;
+- la traduction ;
+- la distribution sur les timelines ;
+- la lisibilité dans ASS.
+
+Les paramètres importants sont :
+
+```yaml
+max_merged_chars: 90
+max_missing_lines: 2
 ```
+
+Recommandations :
+
+| Cas | Valeur conseillée |
+|---|---|
+| Sous-titres courts | `max_merged_chars: 60` |
+| Chansons / paroles | `max_merged_chars: 90` |
+| Texte parlé dense | `max_merged_chars: 110` |
+| Éviter gros blocs | `max_missing_lines: 1` |
+| Autoriser rattrapage léger | `max_missing_lines: 2` |
 
 ---
 
-# Bloc `alignment`
+## 11. Correction des blocs fusionnés globaux
 
-Configure l’alignement entre la transcription ASR YouTube et le fichier Mulan.
+Certains alignements produisent un gros segment contenant une traduction correcte de plusieurs petits segments précédents.
+
+Exemple problématique :
+
+```ass
+Dialogue: 0,0:00:19.32,0:00:25.76,...,La ciudad del mes de mayo tiene labios
+Dialogue: 1,0:00:22.76,0:00:25.76,...,- ¿Qué?
+Dialogue: 2,0:00:26.52,0:00:32.16,...,La hermosa mariquita te invita a ti
+...
+Dialogue: 9,0:01:03.56,0:01:11.84,...,La Bella del mes de mayo tiene ...
+```
+
+Dans ce cas, le segment 9 contient parfois le bon texte global, mais avec une mauvaise timeline.
+
+La correction appliquée est :
+
+```text
+garder le texte du gros bloc
+redistribuer ce texte sur les timelines des petits fragments
+supprimer le gros bloc comme événement unique
+```
+
+Paramètres :
 
 ```yaml
 alignment:
-  max_distance_ratio: 0.15
-  search_window: 20
-  insert_missing_between_matches: true
+  merged_fix_max_group_gap: 1.25
+  merged_fix_min_group_segments: 3
+  merged_fix_duration_factor: 1.8
+  merged_fix_text_ratio: 0.55
 ```
+
+### Rôle des paramètres
+
+| Paramètre | Rôle |
+|---|---|
+| `merged_fix_max_group_gap` | gap maximal entre fragments pour les considérer dans le même groupe |
+| `merged_fix_min_group_segments` | nombre minimal de segments dans un groupe |
+| `merged_fix_duration_factor` | détecte si un segment couvre une grande partie du groupe |
+| `merged_fix_text_ratio` | détecte si un segment contient beaucoup plus de texte que les autres |
 
 ---
 
-## `alignment.max_distance_ratio`
+## 12. Redistribution du texte fusionné
 
-Seuil maximum de différence accepté entre une ligne ASR et une ligne Mulan.
+Quand un gros bloc est détecté, son texte est découpé proportionnellement aux durées des petits segments.
 
-```yaml
-max_distance_ratio: 0.15
-```
-
-La valeur est basée sur une distance de Levenshtein normalisée :
+Exemple :
 
 ```text
-0.00 = textes identiques
-0.05 = très proche
-0.10 = strict
-0.15 = recommandé
-0.20 = tolérant
-0.30 = risqué
+texte fusionné :
+"La Bella del mes de mayo tiene labios hinchados ..."
+
+timelines :
+19.32 → 25.76
+22.76 → 25.76
+26.52 → 32.16
 ```
 
-Recommandation :
-
-```yaml
-max_distance_ratio: 0.15
-```
-
-Pour ASR YouTube + paroles Mulan, `0.10` peut être trop strict.
-
----
-
-## `alignment.search_window`
-
-Nombre maximum de lignes Mulan regardées à partir de la position courante.
-
-```yaml
-search_window: 20
-```
-
-Ce paramètre évite que le script aille matcher un refrain identique beaucoup plus loin dans le fichier.
-
-Valeurs recommandées :
+Résultat :
 
 ```text
-8 à 12  = strict
-15 à 20 = recommandé
-30+     = plus tolérant mais risque de mauvais match
+19.32 → 25.76 : La Bella del mes de mayo...
+22.76 → 25.76 : ...
+26.52 → 32.16 : ...
 ```
+
+La découpe se fait par mots, pas par caractères, afin d'éviter de couper un mot au milieu.
 
 ---
 
-## `alignment.insert_missing_between_matches`
+## 13. Traduction locale
 
-Autorise l’insertion de lignes Mulan manquantes entre deux lignes alignées.
+La traduction est optionnelle.
 
-```yaml
-insert_missing_between_matches: true
-```
-
-Si `true`, lorsque le script trouve une ligne Mulan plus loin que la position attendue, il insère les lignes intermédiaires juste avant le segment trouvé.
-
-Si `false`, les lignes non matchées ne sont pas ajoutées.
-
-Pour éviter les accumulations parasites :
-
-```yaml
-insert_missing_between_matches: false
-```
-
-Pour un karaoké plus complet :
-
-```yaml
-insert_missing_between_matches: true
-```
-
-Important : le script ne doit pas ajouter automatiquement toutes les lignes restantes en fin de SRT.
-
----
-
-# Bloc `subtitle_stack`
-
-Configure l’affichage multi-lignes de bas en haut.
-
-```yaml
-subtitle_stack:
-  enabled: true
-  max_lines: 3
-  min_duration: 0.15
-```
-
----
-
-## `subtitle_stack.enabled`
-
-Active ou désactive l’empilement temporel des sous-titres.
-
-```yaml
-enabled: true
-```
-
-Si activé, plusieurs lignes actives peuvent être affichées dans un même bloc SRT.
-
----
-
-## `subtitle_stack.max_lines`
-
-Nombre maximum de lignes visibles simultanément.
-
-```yaml
-max_lines: 3
-```
-
-Exemple visuel :
-
-```text
-ligne récente
-ligne précédente
-ligne ancienne
-```
-
-En SRT, la dernière ligne du bloc est affichée en bas. Le script inverse donc l’ordre pour construire visuellement la timeline de bas en haut.
-
----
-
-## `subtitle_stack.min_duration`
-
-Durée minimale d’un bloc SRT généré par découpage temporel.
-
-```yaml
-min_duration: 0.15
-```
-
-Cela évite de générer des blocs trop courts.
-
-Valeurs recommandées :
-
-```text
-0.10 = très réactif
-0.15 = recommandé
-0.25 = plus stable
-```
-
----
-
-# Bloc `translation`
-
-Configure la traduction locale via un modèle Hugging Face compatible `transformers`.
+Configuration :
 
 ```yaml
 translation:
-  enabled: true
-  source_language: fr
-  target_language: en
-  model_path: /home/drodriguez/dev/opus-mt-fr-en
-  local_files_only: true
-  device: cpu
-  num_beams: 1
+  enabled: false
+  model_path: "/home/drodriguez/models/opus-mt-fr-es"
+  source_language: "fr"
+  target_language: "es"
   max_length: 256
+  local_files_only: true
+  device: "cpu"
+  num_beams: 1
   log_progress: true
   skip_if_target_detected: true
 ```
 
----
+Le modèle est chargé via Hugging Face Transformers :
 
-## `translation.enabled`
-
-Active ou désactive la traduction.
-
-```yaml
-enabled: true
+```python
+AutoTokenizer.from_pretrained(...)
+AutoModelForSeq2SeqLM.from_pretrained(...)
 ```
 
-Si `false`, le SRT final utilise le texte Mulan aligné.
+### Mode local
 
----
+Si `local_files_only: true`, le chemin local doit exister.
 
-## `translation.source_language`
+Sinon le script lève :
 
-Langue source attendue.
-
-```yaml
-source_language: fr
+```text
+FileNotFoundError: Modèle local introuvable
 ```
 
-Exemples :
+### CPU
+
+Pour une machine sans GPU NVIDIA :
 
 ```yaml
-source_language: fr
-source_language: es
-source_language: en
+device: "cpu"
 ```
 
 ---
 
-## `translation.target_language`
+## 14. Détection de langue simplifiée
 
-Langue cible.
+Le script utilise une détection très simple par mots marqueurs.
 
-```yaml
-target_language: en
+Exemples pour le français :
+
+```text
+je, tu, il, elle, les, des, que, qui, pas, dans, avec, pour
 ```
 
-Si `source_language` et `target_language` sont identiques, la traduction est désactivée automatiquement.
+Cette détection sert uniquement à éviter de retraduire un segment déjà dans la langue cible.
 
----
-
-## `translation.model_path`
-
-Chemin local ou nom Hugging Face du modèle.
-
-```yaml
-model_path: /home/drodriguez/dev/opus-mt-fr-en
-```
-
-Exemples locaux :
-
-```yaml
-model_path: /home/drodriguez/dev/opus-mt-fr-en
-model_path: /home/drodriguez/dev/opus-mt-fr-es
-```
-
----
-
-## `translation.local_files_only`
-
-Force l’utilisation de fichiers locaux uniquement.
-
-```yaml
-local_files_only: true
-```
-
-Recommandé si le modèle a déjà été téléchargé localement.
-
----
-
-## `translation.device`
-
-Périphérique d’exécution.
-
-```yaml
-device: cpu
-```
-
-Valeurs typiques :
-
-```yaml
-device: cpu
-device: cuda
-```
-
-Sur machine sans NVIDIA, utiliser :
-
-```yaml
-device: cpu
-```
-
----
-
-## `translation.num_beams`
-
-Nombre de beams pour la génération.
-
-```yaml
-num_beams: 1
-```
-
-Recommandation CPU :
-
-```yaml
-num_beams: 1
-```
-
-Un nombre plus élevé peut améliorer certains résultats mais ralentit fortement.
-
----
-
-## `translation.max_length`
-
-Longueur maximale générée par le modèle.
-
-```yaml
-max_length: 256
-```
-
-Pour des paroles courtes, `128` ou `256` suffit généralement.
-
----
-
-## `translation.log_progress`
-
-Affiche la progression segment par segment.
-
-```yaml
-log_progress: true
-```
-
----
-
-## `translation.skip_if_target_detected`
-
-Évite de retraduire une ligne qui semble déjà être dans la langue cible.
+Paramètre :
 
 ```yaml
 skip_if_target_detected: true
 ```
 
-Exemple : si `source_language: fr` et `target_language: en`, une ligne déjà détectée comme anglaise est conservée telle quelle.
-
-Utile quand les paroles mélangent français et anglais.
-
----
-
-# Bloc `youtube_download`
-
-Configure le téléchargement vidéo par `yt-dlp`.
+Si la détection provoque trop de faux positifs, utiliser :
 
 ```yaml
-youtube_download:
-  enabled: false
-  cookies_from_browser: chrome
-  remote_components: ejs:github
-  format: "bv*[height<=720]+ba/b[height<=720]/best"
-  no_check_certificate: false
+skip_if_target_detected: false
 ```
 
 ---
 
-## `youtube_download.enabled`
+## 15. Limitation du nombre de caractères par ligne
 
-Active le téléchargement de la vidéo YouTube.
+Avant génération du fichier ASS, le texte est reformaté selon :
 
 ```yaml
-enabled: true
+ass:
+  max_chars_per_line: 42
 ```
 
-Nécessaire uniquement si `burn.enabled: true` et si aucun `burn.input_video` local n’est fourni.
+Exemple :
 
----
-
-## `youtube_download.cookies_from_browser`
-
-Utilise les cookies du navigateur.
-
-```yaml
-cookies_from_browser: chrome
+```text
+This is a very long subtitle that should not stay on a single line
 ```
 
-Utile pour les vidéos nécessitant session, âge, restrictions ou challenge YouTube.
+devient :
 
----
-
-## `youtube_download.cookies`
-
-Chemin vers un fichier cookies exporté.
-
-```yaml
-cookies: "./cookies.txt"
+```text
+This is a very long subtitle that
+should not stay on a single line
 ```
 
-Alternative à `cookies_from_browser`.
+Dans ASS, les retours ligne sont écrits sous forme :
 
----
-
-## `youtube_download.remote_components`
-
-Charge les composants JavaScript distants nécessaires à certains challenges YouTube.
-
-```yaml
-remote_components: ejs:github
-```
-
-Utile avec `yt-dlp` lorsque YouTube impose un challenge `n`.
-
----
-
-## `youtube_download.format`
-
-Format demandé à `yt-dlp`.
-
-```yaml
-format: "bv*[height<=720]+ba/b[height<=720]/best"
-```
-
-Ce format limite la vidéo à 720p maximum.
-
-Pour plus léger :
-
-```yaml
-format: "bv*[height<=480]+ba/b[height<=480]/best"
+```text
+\N
 ```
 
 ---
 
-## `youtube_download.no_check_certificate`
+## 16. Gestion verticale des chevauchements
 
-Désactive la vérification TLS.
+ASS ne décale pas automatiquement les sous-titres qui se chevauchent.
 
-```yaml
-no_check_certificate: false
+Le script assigne donc une piste verticale à chaque segment.
+
+```text
+track 0 = ligne basse
+track 1 = ligne au-dessus
+track 2 = encore au-dessus
 ```
 
-À laisser à `false` sauf problème réseau spécifique.
+Le positionnement est fait via `MarginV`.
+
+```python
+margin_v_for_track = margin_v + track * line_gap
+```
+
+Configuration :
+
+```yaml
+ass:
+  margin_v: 45
+  line_gap: 72
+  max_tracks: 3
+```
+
+### Effet
+
+| Track | Position |
+|---|---|
+| `0` | bas |
+| `1` | au-dessus |
+| `2` | encore au-dessus |
 
 ---
 
-# Bloc `burn`
+## 17. Comportement demandé : la première ligne monte
 
-Configure l’incrustation du SRT dans la vidéo avec FFmpeg.
+Quand un nouveau sous-titre chevauche un ancien :
+
+```text
+ancien actif
+nouveau arrive
+```
+
+Le comportement voulu est :
+
+```text
+ancien monte
+nouveau prend la ligne basse
+```
+
+Visuellement :
+
+```text
+ancien
+nouveau
+```
+
+Le script décale donc les anciens segments actifs vers le haut quand un nouveau segment arrive.
+
+---
+
+## 18. Notion de Layer ASS
+
+Dans ASS, `Layer` ne signifie pas piste verticale.
+
+Exemple :
+
+```ass
+Dialogue: 0,0:00:10.00,0:00:15.00,Default,,0,0,45,,Texte A
+Dialogue: 1,0:00:10.00,0:00:15.00,Default,,0,0,45,,Texte B
+```
+
+Ici :
+
+```text
+Layer 1 est dessiné au-dessus de Layer 0
+```
+
+Mais les deux textes restent à la même position si `MarginV` est identique.
+
+### Important
+
+```text
+Layer ≠ position verticale
+Layer = priorité de rendu
+```
+
+Dans ce projet, la position verticale est gérée par :
+
+```text
+MarginV
+```
+
+pas par :
+
+```text
+Layer
+```
+
+Le code final écrit donc :
+
+```ass
+Dialogue: 0,...
+```
+
+pour tous les événements, et utilise `MarginV` pour les pistes.
+
+---
+
+## 19. Format ASS généré
+
+Exemple de header :
+
+```ass
+[Script Info]
+ScriptType: v4.00+
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+PlayResX: 1920
+PlayResY: 1080
+```
+
+Style :
+
+```ass
+[V4+ Styles]
+Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
+Style: Default,Arial,54,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,0,2,60,60,45,1
+```
+
+Événement :
+
+```ass
+Dialogue: 0,0:00:19.32,0:00:25.76,Default,,0,0,117,,Texte
+```
+
+Champs :
+
+```text
+Dialogue: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+```
+
+---
+
+## 20. Échappement ASS
+
+Le texte est échappé avant écriture.
+
+Transformations :
+
+| Entrée | Sortie |
+|---|---|
+| `\` | `\\` |
+| `{` | `\{` |
+| `}` | `\}` |
+| retour ligne | `\N` |
+
+Cela évite que des caractères spéciaux soient interprétés comme des tags ASS.
+
+---
+
+## 21. Burn vidéo avec FFmpeg
+
+Si `burn.enabled: true`, le script produit une vidéo avec sous-titres incrustés.
+
+Commande utilisée :
+
+```bash
+ffmpeg -y \
+  -i input.mp4 \
+  -vf "ass='file.ass'" \
+  -c:v libx264 \
+  -preset veryfast \
+  -crf 23 \
+  -c:a copy \
+  output.mp4
+```
+
+Configuration :
 
 ```yaml
 burn:
@@ -560,208 +657,398 @@ burn:
   output_video: ""
 ```
 
----
-
-## `burn.enabled`
-
-Active le burn vidéo.
-
-```yaml
-enabled: true
-```
-
-Si activé, le script génère une vidéo avec sous-titres incrustés.
+Si `input_video` est vide, le script tente de télécharger la vidéo YouTube via `yt-dlp`.
 
 ---
 
-## `burn.input_video`
+## 22. Téléchargement YouTube optionnel
 
-Chemin vers une vidéo locale.
-
-```yaml
-input_video: "/home/drodriguez/Vidéos/input.mp4"
-```
-
-Si ce champ est renseigné, le script n’a pas besoin de télécharger la vidéo YouTube.
-
----
-
-## `burn.output_video`
-
-Chemin de sortie de la vidéo burnée.
+Configuration :
 
 ```yaml
-output_video: "./out/video_burned.mp4"
-```
-
-Si vide, le script utilise :
-
-```text
-out/<video_id>.burned.mp4
-```
-
----
-
-# Exemple minimal sans traduction
-
-```yaml
-youtube_url: "https://www.youtube.com/watch?v=XXXXXXXXXXX"
-mulan_file: "./mulan.txt"
-languages: ["fr"]
-output_dir: "./out"
-
-alignment:
-  max_distance_ratio: 0.15
-  search_window: 20
-  insert_missing_between_matches: true
-
-subtitle_stack:
-  enabled: false
-
-translation:
-  enabled: false
-
 youtube_download:
   enabled: false
+  format: "bv*[height<=720]+ba/b[height<=720]/best"
+  cookies_from_browser: ""
+  cookies: ""
+  remote_components: ""
+  no_check_certificate: false
+```
 
-burn:
-  enabled: false
+Le téléchargement utilise :
+
+```bash
+python -m yt_dlp --no-playlist
+```
+
+Options supportées :
+
+| Option | Rôle |
+|---|---|
+| `cookies_from_browser` | récupère les cookies depuis un navigateur |
+| `cookies` | utilise un fichier cookies |
+| `remote_components` | option yt-dlp |
+| `no_check_certificate` | désactive la vérification TLS |
+| `format` | sélection du format vidéo/audio |
+
+---
+
+## 23. Fichiers de sortie
+
+Le script génère :
+
+```text
+out/<video_id>.mulan.ass
+out/<video_id>.mulan.txt
+out/<video_id>.debug.tsv
+```
+
+ou, si traduction activée :
+
+```text
+out/<video_id>.translated.ass
+out/<video_id>.translated.txt
+out/<video_id>.debug.tsv
+```
+
+### `.ass`
+
+Fichier principal de sous-titres.
+
+### `.txt`
+
+Texte final brut, une entrée par segment.
+
+### `.debug.tsv`
+
+Fichier de debug avec :
+
+```text
+start
+end
+distance_ratio
+inserted
+mulan_index
+asr_text
+final_text
 ```
 
 ---
 
-# Exemple avec traduction FR → EN
+## 24. Configuration complète
 
 ```yaml
 youtube_url: "https://www.youtube.com/watch?v=XXXXXXXXXXX"
 mulan_file: "./mulan.txt"
-languages: ["fr", "en"]
+
+languages:
+  - fr
+  - en
+
 output_dir: "./out"
 
 alignment:
-  max_distance_ratio: 0.15
-  search_window: 20
+  max_distance_ratio: 0.10
+  search_window: 12
   insert_missing_between_matches: true
+  max_merged_chars: 90
+  max_missing_lines: 2
 
-subtitle_stack:
-  enabled: true
-  max_lines: 3
-  min_duration: 0.15
+  merged_fix_max_group_gap: 1.25
+  merged_fix_min_group_segments: 3
+  merged_fix_duration_factor: 1.8
+  merged_fix_text_ratio: 0.55
 
 translation:
-  enabled: true
-  source_language: fr
-  target_language: en
-  model_path: /home/drodriguez/dev/opus-mt-fr-en
-  local_files_only: true
-  device: cpu
-  num_beams: 1
+  enabled: false
+  model_path: "/home/drodriguez/models/opus-mt-fr-es"
+  source_language: "fr"
+  target_language: "es"
   max_length: 256
+  local_files_only: true
+  device: "cpu"
+  num_beams: 1
   log_progress: true
   skip_if_target_detected: true
 
-youtube_download:
-  enabled: false
-
-burn:
-  enabled: false
-```
-
----
-
-# Exemple avec burn vidéo locale
-
-```yaml
-youtube_url: "https://www.youtube.com/watch?v=XXXXXXXXXXX"
-mulan_file: "./mulan.txt"
-languages: ["fr"]
-output_dir: "./out"
-
-alignment:
-  max_distance_ratio: 0.15
-  search_window: 20
-  insert_missing_between_matches: true
-
-subtitle_stack:
-  enabled: true
-  max_lines: 3
-  min_duration: 0.15
-
-translation:
-  enabled: false
+ass:
+  play_res_x: 1920
+  play_res_y: 1080
+  font_name: Arial
+  font_size: 54
+  margin_v: 45
+  line_gap: 72
+  max_tracks: 3
+  max_chars_per_line: 42
 
 youtube_download:
   enabled: false
-
-burn:
-  enabled: true
-  input_video: "/home/drodriguez/Vidéos/input.mp4"
-  output_video: "./out/input_burned.mp4"
-```
-
----
-
-# Exemple avec téléchargement YouTube + burn
-
-```yaml
-youtube_url: "https://www.youtube.com/watch?v=XXXXXXXXXXX"
-mulan_file: "./mulan.txt"
-languages: ["fr"]
-output_dir: "./out"
-
-alignment:
-  max_distance_ratio: 0.15
-  search_window: 20
-  insert_missing_between_matches: true
-
-subtitle_stack:
-  enabled: true
-  max_lines: 3
-  min_duration: 0.15
-
-translation:
-  enabled: false
-
-youtube_download:
-  enabled: true
-  cookies_from_browser: chrome
-  remote_components: ejs:github
   format: "bv*[height<=720]+ba/b[height<=720]/best"
+  cookies_from_browser: ""
+  cookies: ""
+  remote_components: ""
   no_check_certificate: false
 
 burn:
-  enabled: true
+  enabled: false
   input_video: ""
-  output_video: "./out/youtube_burned.mp4"
+  output_video: ""
 ```
 
 ---
 
-# Recommandation par défaut
+## 25. Paramètres recommandés
 
-Pour ton usage actuel, configuration conseillée :
+### Cas général
+
+```yaml
+alignment:
+  max_distance_ratio: 0.10
+  search_window: 12
+  max_merged_chars: 90
+  max_missing_lines: 2
+
+ass:
+  max_chars_per_line: 42
+  max_tracks: 3
+```
+
+### Si trop de mauvais matchs
+
+```yaml
+alignment:
+  max_distance_ratio: 0.06
+  search_window: 8
+```
+
+### Si trop peu de matchs
 
 ```yaml
 alignment:
   max_distance_ratio: 0.15
-  search_window: 20
-  insert_missing_between_matches: true
-
-subtitle_stack:
-  enabled: true
-  max_lines: 3
-  min_duration: 0.15
-
-translation:
-  enabled: true
-  source_language: fr
-  target_language: en
-  model_path: /home/drodriguez/dev/opus-mt-fr-en
-  local_files_only: true
-  device: cpu
-  num_beams: 1
-  max_length: 256
-  log_progress: true
-  skip_if_target_detected: true
+  search_window: 18
 ```
 
+### Si les blocs sont trop longs
+
+```yaml
+alignment:
+  max_merged_chars: 60
+  max_missing_lines: 1
+
+ass:
+  max_chars_per_line: 36
+```
+
+### Si les sous-titres montent trop haut
+
+```yaml
+ass:
+  max_tracks: 2
+  line_gap: 60
+```
+
+### Si les sous-titres se chevauchent encore visuellement
+
+```yaml
+ass:
+  line_gap: 90
+  max_tracks: 4
+```
+
+---
+
+## 26. Dépannage
+
+### Les sous-titres sont trop longs
+
+Réduire :
+
+```yaml
+ass:
+  max_chars_per_line: 36
+```
+
+et/ou :
+
+```yaml
+alignment:
+  max_merged_chars: 60
+  max_missing_lines: 1
+```
+
+---
+
+### Le texte correct apparaît comme gros bloc final
+
+Activer ou ajuster :
+
+```yaml
+alignment:
+  merged_fix_max_group_gap: 1.25
+  merged_fix_min_group_segments: 3
+  merged_fix_duration_factor: 1.8
+  merged_fix_text_ratio: 0.55
+```
+
+Si le bloc n'est pas détecté, essayer :
+
+```yaml
+merged_fix_text_ratio: 0.40
+merged_fix_duration_factor: 2.5
+```
+
+---
+
+### Les sous-titres montent mais l'ordre semble inversé
+
+Rappel :
+
+```text
+track 0 = bas
+track 1 = au-dessus
+track 2 = encore au-dessus
+```
+
+Le comportement voulu est :
+
+```text
+ancien monte
+nouveau reste en bas
+```
+
+Si tu veux l'inverse, il faut modifier `assign_ass_tracks`.
+
+---
+
+### Le champ Layer augmente dans le fichier ASS
+
+Ce n'est pas souhaité dans la version finale.
+
+Le code doit écrire :
+
+```python
+f"Dialogue: 0,{start},{end},Default,,"
+```
+
+et non :
+
+```python
+f"Dialogue: {idx},{start},{end},Default,,"
+```
+
+La piste verticale doit être portée par :
+
+```text
+MarginV
+```
+
+pas par :
+
+```text
+Layer
+```
+
+---
+
+### FFmpeg échoue avec le filtre ASS
+
+Vérifier :
+
+```bash
+ffmpeg -filters | grep ass
+```
+
+Le build FFmpeg doit inclure libass.
+
+Tester aussi le chemin :
+
+```bash
+ls -l out/video.ass
+```
+
+Si le chemin contient des caractères spéciaux, le script applique déjà un échappement via `ass_filter_path`.
+
+---
+
+### Le modèle de traduction est introuvable
+
+Avec :
+
+```yaml
+local_files_only: true
+```
+
+le chemin doit exister :
+
+```bash
+ls -l /home/drodriguez/models/opus-mt-fr-es
+```
+
+Sinon désactiver le mode local :
+
+```yaml
+local_files_only: false
+```
+
+ou télécharger le modèle localement.
+
+---
+
+## 27. Commande d'exécution
+
+Par défaut :
+
+```bash
+python script.py
+```
+
+Avec un fichier de config explicite :
+
+```bash
+CONFIG=config.yaml python script.py
+```
+
+---
+
+## 28. Dépendances Python
+
+```bash
+pip install pyyaml youtube-transcript-api transformers torch yt-dlp
+```
+
+Si traduction désactivée, `transformers` et `torch` ne sont nécessaires que si le module est importé dans l'environnement.
+
+Pour le burn vidéo :
+
+```bash
+sudo apt install ffmpeg
+```
+
+---
+
+## 29. Limites connues
+
+1. L'alignement repose sur une distance de caractères, pas sur un vrai alignement phonétique.
+2. La détection de langue est volontairement simplifiée.
+3. La redistribution du gros bloc se fait proportionnellement aux durées, pas au sens linguistique.
+4. Les longues phrases peuvent être coupées au mauvais endroit si le texte source est très compact.
+5. `max_tracks` limite le nombre de pistes visibles ; au-delà, des segments peuvent partager une piste.
+6. Le format ASS ne résout pas automatiquement les chevauchements : le script les gère via `MarginV`.
+
+---
+
+## 30. Résumé de la logique finale
+
+```text
+Mulan fournit le texte de référence.
+YouTube ASR fournit la timeline.
+Le script aligne Mulan sur ASR.
+Les fragments manquants sont fusionnés avec limite.
+Les gros blocs corrects sont redistribués sur les petites timelines.
+La traduction est optionnelle.
+Le texte final est wrapé.
+ASS positionne les sous-titres par MarginV.
+Layer reste à 0.
+FFmpeg peut incruster le fichier ASS dans la vidéo.
+```

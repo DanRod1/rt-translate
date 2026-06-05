@@ -587,14 +587,66 @@ def apply_max_chars_per_line(
     if max_chars_per_line <= 0:
         return segments
 
+    return [
+        CaptionSegment(
+            start=seg.start,
+            duration=seg.duration,
+            text=wrap_text_max_chars(seg.text, max_chars_per_line),
+            source_text=seg.source_text,
+            distance_ratio=seg.distance_ratio,
+            mulan_index=seg.mulan_index,
+            inserted=seg.inserted,
+        )
+        for seg in segments
+    ]
+
+
+def split_text_by_timelines(
+    text: str,
+    timelines: list[CaptionSegment],
+    max_chars_per_line: int = 42,
+) -> list[CaptionSegment]:
+    text = normalize_text(text)
+    words = text.split()
+
+    timelines = sorted(timelines, key=lambda s: (s.start, s.start + s.duration))
+
+    if not words or not timelines:
+        return []
+
+    total_duration = sum(max(0.01, seg.duration) for seg in timelines)
+    chunks: list[list[str]] = [[] for _ in timelines]
+    word_index = 0
+
+    for i, seg in enumerate(timelines):
+        if i == len(timelines) - 1:
+            chunks[i] = words[word_index:]
+            break
+
+        ratio = max(0.01, seg.duration) / total_duration
+        target_count = max(1, round(len(words) * ratio))
+
+        remaining_words = len(words) - word_index
+        remaining_slots = len(timelines) - i
+
+        target_count = min(target_count, max(1, remaining_words - remaining_slots + 1))
+
+        chunks[i] = words[word_index:word_index + target_count]
+        word_index += target_count
+
     out: list[CaptionSegment] = []
 
-    for seg in segments:
+    for seg, chunk_words in zip(timelines, chunks):
+        chunk_text = normalize_text(" ".join(chunk_words))
+
+        if not chunk_text:
+            continue
+
         out.append(
             CaptionSegment(
                 start=seg.start,
                 duration=seg.duration,
-                text=wrap_text_max_chars(seg.text, max_chars_per_line),
+                text=wrap_text_max_chars(chunk_text, max_chars_per_line),
                 source_text=seg.source_text,
                 distance_ratio=seg.distance_ratio,
                 mulan_index=seg.mulan_index,
@@ -603,6 +655,81 @@ def apply_max_chars_per_line(
         )
 
     return out
+
+
+def replace_bad_fragment_group_with_merged_text(
+    segments: list[CaptionSegment],
+    max_group_gap: float = 1.25,
+    min_group_segments: int = 3,
+    merged_duration_factor: float = 1.8,
+    merged_text_ratio: float = 0.55,
+    max_chars_per_line: int = 42,
+) -> list[CaptionSegment]:
+    ordered = sorted(segments, key=lambda s: (s.start, s.start + s.duration))
+    result: list[CaptionSegment] = []
+    i = 0
+
+    while i < len(ordered):
+        current = ordered[i]
+        group_start = current.start
+        group_end = current.start + current.duration
+
+        group: list[CaptionSegment] = [current]
+        j = i + 1
+
+        while j < len(ordered):
+            nxt = ordered[j]
+            nxt_start = nxt.start
+            nxt_end = nxt.start + nxt.duration
+
+            if nxt_start - group_end > max_group_gap:
+                break
+
+            group.append(nxt)
+            group_end = max(group_end, nxt_end)
+            j += 1
+
+        if len(group) < min_group_segments:
+            result.extend(group)
+            i = j
+            continue
+
+        group_duration = max(0.01, group_end - group_start)
+        candidate_merged: Optional[CaptionSegment] = None
+
+        for seg in group:
+            other_text_len = sum(len(x.text) for x in group if x is not seg)
+            long_enough = len(seg.text) > other_text_len * merged_text_ratio
+            duration_enough = seg.duration >= group_duration / merged_duration_factor
+
+            if long_enough and duration_enough:
+                candidate_merged = seg
+                break
+
+        if candidate_merged is None:
+            result.extend(group)
+            i = j
+            continue
+
+        timelines = [seg for seg in group if seg is not candidate_merged]
+
+        if not timelines:
+            result.append(candidate_merged)
+            i = j
+            continue
+
+        result.extend(
+            split_text_by_timelines(
+                candidate_merged.text,
+                timelines,
+                max_chars_per_line=max_chars_per_line,
+            )
+        )
+
+        i = j
+
+    result.sort(key=lambda s: (s.start, s.start + s.duration))
+    return result
 
 
 def assign_ass_tracks(
@@ -675,10 +802,7 @@ def write_ass(
     line_gap: int = 72,
     max_tracks: int = 3,
 ) -> None:
-    ordered_with_tracks = assign_ass_tracks(
-        segments,
-        max_tracks=max_tracks,
-    )
+    ordered_with_tracks = assign_ass_tracks(segments, max_tracks=max_tracks)
 
     with open(path, "w", encoding="utf-8") as f:
         f.write("[Script Info]\n")
@@ -723,7 +847,7 @@ def write_ass(
             text = ass_escape(seg.text)
 
             f.write(
-                f"Dialogue: {idx},{start},{end},Default,,"
+                f"Dialogue: 0,{start},{end},Default,,"
                 f"0,0,{margin_v_for_track},,{text}\n"
             )
 
@@ -949,14 +1073,7 @@ def main() -> None:
     output_dir = config.get("output_dir", "./out")
 
     alignment_cfg = config.get("alignment", {}) or {}
-
-    max_distance_ratio = float(alignment_cfg.get("max_distance_ratio", 0.10))
-    search_window = int(alignment_cfg.get("search_window", 12))
-    insert_missing_between_matches = bool(
-        alignment_cfg.get("insert_missing_between_matches", True)
-    )
-    max_merged_chars = int(alignment_cfg.get("max_merged_chars", 90))
-    max_missing_lines = int(alignment_cfg.get("max_missing_lines", 2))
+    ass_cfg = config.get("ass", {}) or {}
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -976,11 +1093,13 @@ def main() -> None:
     aligned = align_mulan_to_asr_by_char_distance(
         asr_segments,
         mulan_items,
-        max_distance_ratio=max_distance_ratio,
-        search_window=search_window,
-        insert_missing_between_matches=insert_missing_between_matches,
-        max_merged_chars=max_merged_chars,
-        max_missing_lines=max_missing_lines,
+        max_distance_ratio=float(alignment_cfg.get("max_distance_ratio", 0.10)),
+        search_window=int(alignment_cfg.get("search_window", 12)),
+        insert_missing_between_matches=bool(
+            alignment_cfg.get("insert_missing_between_matches", True)
+        ),
+        max_merged_chars=int(alignment_cfg.get("max_merged_chars", 90)),
+        max_missing_lines=int(alignment_cfg.get("max_missing_lines", 2)),
     )
 
     adjusted = apply_mulan_timeline_adjustments(aligned, mulan_items)
@@ -1000,18 +1119,27 @@ def main() -> None:
 
     final_segments.sort(key=lambda s: (s.start, s.start + s.duration))
 
-    suffix = "translated" if translator is not None else "mulan"
-
-    ass_path = os.path.join(output_dir, f"{video_id}.{suffix}.ass")
-    txt_path = os.path.join(output_dir, f"{video_id}.{suffix}.txt")
-    debug_path = os.path.join(output_dir, f"{video_id}.debug.tsv")
-
-    ass_cfg = config.get("ass", {}) or {}
+    final_segments = replace_bad_fragment_group_with_merged_text(
+        final_segments,
+        max_group_gap=float(alignment_cfg.get("merged_fix_max_group_gap", 1.25)),
+        min_group_segments=int(alignment_cfg.get("merged_fix_min_group_segments", 3)),
+        merged_duration_factor=float(
+            alignment_cfg.get("merged_fix_duration_factor", 1.8)
+        ),
+        merged_text_ratio=float(alignment_cfg.get("merged_fix_text_ratio", 0.55)),
+        max_chars_per_line=int(ass_cfg.get("max_chars_per_line", 42)),
+    )
 
     final_segments = apply_max_chars_per_line(
         final_segments,
         int(ass_cfg.get("max_chars_per_line", 42)),
     )
+
+    suffix = "translated" if translator is not None else "mulan"
+
+    ass_path = os.path.join(output_dir, f"{video_id}.{suffix}.ass")
+    txt_path = os.path.join(output_dir, f"{video_id}.{suffix}.txt")
+    debug_path = os.path.join(output_dir, f"{video_id}.debug.tsv")
 
     write_ass(
         ass_path,
