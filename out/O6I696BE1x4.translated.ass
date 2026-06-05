@@ -1,0 +1,86 @@
+[Script Info]
+ScriptType: v4.00+
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+PlayResX: 1920
+PlayResY: 1080
+
+[V4+ Styles]
+Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
+Style: Default,Arial,54,&H00FFFFFF,&H000000FF,&H000000FF,&H000000FF,0,0,0,0,100,100,0,0,3,2,0,2,60,60,45,1
+Style: OverlapOld,Arial,54,&H00FFFFFF,&H000000FF,&H00000000,&HCC000000,0,0,0,0,100,100,0,0,3,2,0,2,60,60,45,1
+Style: OverlapNew,Arial,54,&H00FFFFFF,&H000000FF,&H000000FF,&H000000FF,0,0,0,0,100,100,0,0,3,2,0,2,60,60,45,1
+
+[Events]
+Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+Dialogue: 0,0:00:19.32,0:00:22.76,Default,,0,0,117,,La ciudad del mes de mayo tiene labios
+Dialogue: 0,0:00:22.76,0:00:25.76,OverlapNew,,0,0,45,,- ¿Qué?
+Dialogue: 0,0:00:22.76,0:00:25.76,OverlapOld,,0,0,117,,La ciudad del mes de mayo tiene labios
+Dialogue: 0,0:00:26.52,0:00:29.16,Default,,0,0,117,,La hermosa mariquita te invita a ti
+Dialogue: 0,0:00:29.16,0:00:32.16,OverlapNew,,0,0,45,,Acostarse.
+Dialogue: 0,0:00:29.16,0:00:32.16,OverlapOld,,0,0,117,,La hermosa mariquita te invita a ti
+Dialogue: 0,0:00:35.48,0:00:37.36,Default,,0,0,117,,Están aquí.
+Dialogue: 0,0:00:37.36,0:00:41.32,OverlapNew,,0,0,45,,si en la
+Dialogue: 0,0:00:37.36,0:00:41.32,OverlapOld,,0,0,117,,Están aquí.
+Dialogue: 0,0:00:47.60,0:00:53.04,Default,,0,0,45,,onapend para bailar y para el opletis
+Dialogue: 0,0:00:56.56,0:00:59.76,Default,,0,0,117,,sólido algos y pera vienen
+Dialogue: 0,0:00:59.76,0:01:02.72,OverlapNew,,0,0,45,,tentarla
+Dialogue: 0,0:00:59.76,0:01:02.72,OverlapOld,,0,0,117,,sólido algos y pera vienen
+Dialogue: 0,0:01:03.56,0:01:07.56,Default,,0,0,117,,A pesar de su sonrisa y su aspecto\Natractivo
+Dialogue: 0,0:01:07.56,0:01:11.84,OverlapNew,,0,0,117,,La Bella de Cádiz no ve a ningún amante.
+Dialogue: 0,0:01:07.56,0:01:11.84,OverlapOld,,0,0,117,,A pesar de su sonrisa y su aspecto\Natractivo
+Dialogue: 0,0:01:11.84,0:01:15.80,OverlapNew,,0,0,117,,Chik chik chik a a
+Dialogue: 0,0:01:11.84,0:01:15.80,OverlapOld,,0,0,117,,La Bella de Cádiz no ve a ningún amante.
+Dialogue: 0,0:01:15.80,0:01:19.80,OverlapOld,,0,0,117,,Chik chik chik a a
+Dialogue: 0,0:01:15.80,0:01:19.80,OverlapNew,,0,0,189,,Chik chik a a
+Dialogue: 0,0:01:19.80,0:01:23.52,OverlapNew,,0,0,189,,chik chika chik a a
+Dialogue: 0,0:01:19.80,0:01:23.52,OverlapOld,,0,0,189,,Chik chik a a
+Dialogue: 0,0:01:23.52,0:01:27.60,OverlapNew,,0,0,117,,No quieres un imán.
+Dialogue: 0,0:01:23.52,0:01:27.60,OverlapOld,,0,0,189,,chik chika chik a a
+Dialogue: 0,0:01:27.60,0:01:31.80,OverlapNew,,0,0,117,,La hermosa Cádiz tiene ojos langosos.
+Dialogue: 0,0:01:27.60,0:01:31.80,OverlapOld,,0,0,117,,No quieres un imán.
+Dialogue: 0,0:01:31.80,0:01:35.48,OverlapOld,,0,0,117,,La hermosa Cádiz tiene ojos langosos.
+Dialogue: 0,0:01:31.80,0:01:35.48,OverlapNew,,0,0,189,,Bella Cádiz tiene muchos enamorados.
+Dialogue: 0,0:01:35.48,0:01:39.52,OverlapNew,,0,0,117,,Juanito de la baba, eres un hombre
+Dialogue: 0,0:01:35.48,0:01:39.52,OverlapOld,,0,0,189,,Bella Cádiz tiene muchos enamorados.
+Dialogue: 0,0:01:39.52,0:01:42.52,OverlapNew,,0,0,45,,rival.
+Dialogue: 0,0:01:39.52,0:01:42.52,OverlapOld,,0,0,117,,Juanito de la baba, eres un hombre
+Dialogue: 0,0:01:43.56,0:01:46.08,Default,,0,0,117,,Una noche a la luz de la luna y quemado el
+Dialogue: 0,0:01:46.08,0:01:51.52,OverlapNew,,0,0,117,,palmitau para amar más al cuerpo
+Dialogue: 0,0:01:46.08,0:01:51.52,OverlapOld,,0,0,117,,Una noche a la luz de la luna y quemado el
+Dialogue: 0,0:01:51.52,0:01:55.08,OverlapNew,,0,0,117,,daría una fortuna a pesar de su sonrisa
+Dialogue: 0,0:01:51.52,0:01:55.08,OverlapOld,,0,0,117,,palmitau para amar más al cuerpo
+Dialogue: 0,0:01:55.08,0:01:59.40,OverlapNew,,0,0,45,,Y su aspecto atractivo.
+Dialogue: 0,0:01:55.08,0:01:59.40,OverlapOld,,0,0,117,,daría una fortuna a pesar de su sonrisa
+Dialogue: 0,0:01:59.56,0:02:02.60,Default,,0,0,117,,La hermosa Cádiz no quiere un
+Dialogue: 0,0:02:02.60,0:02:03.80,OverlapNew,,0,0,117,,Amante.
+Dialogue: 0,0:02:02.60,0:02:03.80,OverlapOld,,0,0,117,,La hermosa Cádiz no quiere un
+Dialogue: 0,0:02:03.80,0:02:07.76,OverlapOld,,0,0,117,,Amante.
+Dialogue: 0,0:02:03.80,0:02:07.76,OverlapNew,,0,0,189,,Chik chik chik a a
+Dialogue: 0,0:02:07.76,0:02:13.60,OverlapNew,,0,0,117,,Chik chik chik ai ai. Chik chika chik
+Dialogue: 0,0:02:07.76,0:02:13.60,OverlapOld,,0,0,189,,Chik chik chik a a
+Dialogue: 0,0:02:13.60,0:02:15.52,OverlapNew,,0,0,117,,a
+Dialogue: 0,0:02:13.60,0:02:15.52,OverlapOld,,0,0,117,,Chik chik chik ai ai. Chik chika chik
+Dialogue: 0,0:02:15.52,0:02:19.56,OverlapOld,,0,0,117,,a
+Dialogue: 0,0:02:15.52,0:02:19.56,OverlapNew,,0,0,189,,No queremos un imán.
+Dialogue: 0,0:02:19.56,0:02:23.60,OverlapNew,,0,0,117,,La Bella de Cádiz tiene ojos languidos
+Dialogue: 0,0:02:19.56,0:02:23.60,OverlapOld,,0,0,189,,No queremos un imán.
+Dialogue: 0,0:02:23.60,0:02:27.48,OverlapNew,,0,0,117,,La Bella de Cádiz tiene muchos enamorados
+Dialogue: 0,0:02:23.60,0:02:27.48,OverlapOld,,0,0,117,,La Bella de Cádiz tiene ojos languidos
+Dialogue: 0,0:02:27.48,0:02:34.52,OverlapNew,,0,0,45,,Ranito de la baba eres un rival.
+Dialogue: 0,0:02:27.48,0:02:34.52,OverlapOld,,0,0,117,,La Bella de Cádiz tiene muchos enamorados
+Dialogue: 0,0:02:51.12,0:02:55.04,Default,,0,0,117,,Y el ruido todo el mundo
+Dialogue: 0,0:02:55.04,0:02:59.36,OverlapNew,,0,0,117,,Y por la mañana,
+Dialogue: 0,0:02:55.04,0:02:59.36,OverlapOld,,0,0,117,,Y el ruido todo el mundo
+Dialogue: 0,0:02:59.36,0:03:03.52,OverlapNew,,0,0,117,,Ella tomó el camino que conduce sin tu
+Dialogue: 0,0:02:59.36,0:03:03.52,OverlapOld,,0,0,117,,Y por la mañana,
+Dialogue: 0,0:03:03.52,0:03:06.52,OverlapNew,,0,0,45,,Niña.
+Dialogue: 0,0:03:03.52,0:03:06.52,OverlapOld,,0,0,117,,Ella tomó el camino que conduce sin tu
+Dialogue: 0,0:03:07.56,0:03:11.60,Default,,0,0,117,,La bella de Cádiz nunca tuvo un amanda.
+Dialogue: 0,0:03:11.60,0:03:16.28,OverlapNew,,0,0,117,,La hermosa de Cádiz entró en el convento.
+Dialogue: 0,0:03:11.60,0:03:16.28,OverlapOld,,0,0,117,,La bella de Cádiz nunca tuvo un amanda.
+Dialogue: 0,0:03:16.28,0:03:19.28,OverlapNew,,0,0,45,,Cika
+Dialogue: 0,0:03:16.28,0:03:19.28,OverlapOld,,0,0,117,,La hermosa de Cádiz entró en el convento.
+Dialogue: 0,0:03:19.80,0:03:23.28,Default,,0,0,45,,cika cika
+Dialogue: 0,0:03:23.80,0:03:27.28,Default,,0,0,45,,cika cika
+Dialogue: 0,0:03:33.88,0:03:37.88,Default,,0,0,45,,a A a

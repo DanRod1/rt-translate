@@ -12,9 +12,9 @@ output_dir: "./out"
 alignment:
   merged_fix_max_group_gap: 1.25
   merged_fix_min_group_segments: 3
-  merged_fix_duration_factor: 1.8
+  merged_fix_duration_factor: 1.5
   max_distance_ratio: 0.05
-  search_window: 3
+  search_window: 12
   insert_missing_between_matches: true
   max_merged_chars: 42
   max_missing_lines: 1
@@ -30,8 +30,8 @@ ass:
   max_chars_per_line: 42
 
 translation:
-  enabled: false
-  model_path: "/home/drodriguez/models/opus-mt-fr-es"
+  enabled: true
+  model_path: "/home/drodriguez/dev/opus-mt-fr-es"
   source_language: "fr"
   target_language: "es"
   max_length: 256

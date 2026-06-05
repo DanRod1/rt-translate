@@ -33,6 +33,14 @@ class CaptionSegment:
     mulan_index: int = -1
     inserted: bool = False
 
+    # Champs de rendu ASS, remplis en fin de pipeline.
+    # style:
+    # - Default     : une seule ligne active
+    # - OverlapOld  : ancienne ligne en chevauchement, fond noir
+    # - OverlapNew  : dernière ligne affichée en chevauchement, fond rouge
+    style: str = "Default"
+    track: int = 0
+
 
 class LocalTranslator:
     def __init__(
@@ -109,6 +117,32 @@ class LocalTranslator:
 
 def log(message: str) -> None:
     print(message, flush=True)
+
+
+def clone_segment(
+    seg: CaptionSegment,
+    *,
+    start: Optional[float] = None,
+    duration: Optional[float] = None,
+    text: Optional[str] = None,
+    source_text: Optional[str] = None,
+    distance_ratio: Optional[float] = None,
+    mulan_index: Optional[int] = None,
+    inserted: Optional[bool] = None,
+    style: Optional[str] = None,
+    track: Optional[int] = None,
+) -> CaptionSegment:
+    return CaptionSegment(
+        start=seg.start if start is None else start,
+        duration=seg.duration if duration is None else duration,
+        text=seg.text if text is None else text,
+        source_text=seg.source_text if source_text is None else source_text,
+        distance_ratio=seg.distance_ratio if distance_ratio is None else distance_ratio,
+        mulan_index=seg.mulan_index if mulan_index is None else mulan_index,
+        inserted=seg.inserted if inserted is None else inserted,
+        style=seg.style if style is None else style,
+        track=seg.track if track is None else track,
+    )
 
 
 def normalize_text(text: str) -> str:
@@ -441,14 +475,10 @@ def apply_mulan_timeline_adjustments(
                 duration = max(0.01, float(explicit_duration))
 
         adjusted.append(
-            CaptionSegment(
+            clone_segment(
+                seg,
                 start=max(0.0, seg.start + cumulative_offset),
                 duration=duration,
-                text=seg.text,
-                source_text=seg.source_text,
-                distance_ratio=seg.distance_ratio,
-                mulan_index=seg.mulan_index,
-                inserted=seg.inserted,
             )
         )
 
@@ -529,14 +559,9 @@ def maybe_translate_segments(
             log(f"[INFO] Traduction segment {idx}/{len(segments)}")
 
         out.append(
-            CaptionSegment(
-                start=seg.start,
-                duration=seg.duration,
+            clone_segment(
+                seg,
                 text=normalize_text(translator.translate(seg.text)),
-                source_text=seg.source_text,
-                distance_ratio=seg.distance_ratio,
-                mulan_index=seg.mulan_index,
-                inserted=seg.inserted,
             )
         )
 
@@ -588,15 +613,7 @@ def apply_max_chars_per_line(
         return segments
 
     return [
-        CaptionSegment(
-            start=seg.start,
-            duration=seg.duration,
-            text=wrap_text_max_chars(seg.text, max_chars_per_line),
-            source_text=seg.source_text,
-            distance_ratio=seg.distance_ratio,
-            mulan_index=seg.mulan_index,
-            inserted=seg.inserted,
-        )
+        clone_segment(seg, text=wrap_text_max_chars(seg.text, max_chars_per_line))
         for seg in segments
     ]
 
@@ -643,14 +660,9 @@ def split_text_by_timelines(
             continue
 
         out.append(
-            CaptionSegment(
-                start=seg.start,
-                duration=seg.duration,
+            clone_segment(
+                seg,
                 text=wrap_text_max_chars(chunk_text, max_chars_per_line),
-                source_text=seg.source_text,
-                distance_ratio=seg.distance_ratio,
-                mulan_index=seg.mulan_index,
-                inserted=seg.inserted,
             )
         )
 
@@ -773,6 +785,129 @@ def assign_ass_tracks(
     return result
 
 
+def merge_adjacent_ass_render_segments(
+    segments: list[CaptionSegment],
+    max_gap: float = 0.01,
+) -> list[CaptionSegment]:
+    if not segments:
+        return []
+
+    ordered = sorted(
+        segments,
+        key=lambda s: (
+            s.start,
+            s.track,
+            s.style,
+            s.text,
+            s.start + s.duration,
+        ),
+    )
+
+    merged: list[CaptionSegment] = []
+
+    for seg in ordered:
+        if not merged:
+            merged.append(seg)
+            continue
+
+        last = merged[-1]
+        last_end = last.start + last.duration
+
+        if (
+            last.text == seg.text
+            and last.track == seg.track
+            and last.style == seg.style
+            and abs(seg.start - last_end) <= max_gap
+        ):
+            merged[-1] = clone_segment(
+                last,
+                duration=(seg.start + seg.duration) - last.start,
+            )
+        else:
+            merged.append(seg)
+
+    merged.sort(key=lambda s: (s.start, s.track, s.start + s.duration))
+    return merged
+
+
+def prepare_ass_timeline_segments(
+    segments: list[CaptionSegment],
+    max_tracks: int = 3,
+    min_duration: float = 0.03,
+) -> list[CaptionSegment]:
+    """
+    Step de rendu ASS.
+
+    Règle finale:
+    - si une seule ligne est active: Default
+    - si plusieurs lignes sont actives:
+        * toutes les lignes sauf la dernière affichée: OverlapOld, fond noir
+        * la dernière affichée / plus récente: OverlapNew, fond rouge
+
+    Important:
+    ASS ne permet pas de changer de style au milieu d'un Dialogue.
+    On découpe donc les segments aux frontières temporelles.
+    """
+    assigned = assign_ass_tracks(segments, max_tracks=max_tracks)
+
+    source_segments = [
+        clone_segment(seg, track=track, style="Default")
+        for seg, track in assigned
+        if seg.text.strip() and seg.duration > 0
+    ]
+
+    boundaries: set[float] = set()
+
+    for seg in source_segments:
+        boundaries.add(seg.start)
+        boundaries.add(seg.start + seg.duration)
+
+    times = sorted(boundaries)
+    out: list[CaptionSegment] = []
+
+    for i in range(len(times) - 1):
+        start = times[i]
+        end = times[i + 1]
+        duration = end - start
+
+        if duration < min_duration:
+            continue
+
+        active = [
+            seg for seg in source_segments
+            if seg.start < end and (seg.start + seg.duration) > start
+        ]
+
+        if not active:
+            continue
+
+        active_sorted = sorted(
+            active,
+            key=lambda s: (s.start, s.start + s.duration),
+        )
+        newest = active_sorted[-1]
+
+        for seg in active:
+            if len(active) == 1:
+                style = "Default"
+            elif seg is newest:
+                style = "OverlapNew"
+            else:
+                style = "OverlapOld"
+
+            out.append(
+                clone_segment(
+                    seg,
+                    start=start,
+                    duration=duration,
+                    style=style,
+                    track=seg.track,
+                )
+            )
+
+    return merge_adjacent_ass_render_segments(out)
+
+
 def ass_escape(text: str) -> str:
     text = str(text)
     text = text.replace("\\", r"\\")
@@ -802,7 +937,10 @@ def write_ass(
     line_gap: int = 72,
     max_tracks: int = 3,
 ) -> None:
-    ordered_with_tracks = assign_ass_tracks(segments, max_tracks=max_tracks)
+    ordered_segments = sorted(
+        segments,
+        key=lambda s: (s.start, s.track, s.start + s.duration),
+    )
 
     with open(path, "w", encoding="utf-8") as f:
         f.write("[Script Info]\n")
@@ -820,13 +958,41 @@ def write_ass(
             "ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,"
             "Alignment,MarginL,MarginR,MarginV,Encoding\n"
         )
+
+        # Style par défaut: fond rouge.
+        # Avec BorderStyle=3, libass/ffmpeg utilise surtout OutlineColour pour la boîte.
+        # Donc OutlineColour ET BackColour sont rouges.
         f.write(
             "Style: "
             f"Default,{font_name},{font_size},"
-            "&H00FFFFFF,&H000000FF,&H00000000,&H64000000,"
+            "&H00FFFFFF,&H000000FF,&H000000FF,&H000000FF,"
             "0,0,0,0,"
             "100,100,0,0,"
-            "1,2,0,"
+            "3,2,0,"
+            f"2,60,60,{margin_v},1\n"
+        )
+
+        # Anciennes lignes en chevauchement: fond noir.
+        f.write(
+            "Style: "
+            f"OverlapOld,{font_name},{font_size},"
+            "&H00FFFFFF,&H000000FF,&H00000000,&HCC000000,"
+            "0,0,0,0,"
+            "100,100,0,0,"
+            "3,2,0,"
+            f"2,60,60,{margin_v},1\n"
+        )
+
+        # Dernière ligne affichée en chevauchement: fond rouge.
+        # Avec BorderStyle=3, libass/ffmpeg utilise surtout OutlineColour pour la boîte.
+        # Donc OutlineColour ET BackColour sont rouges.
+        f.write(
+            "Style: "
+            f"OverlapNew,{font_name},{font_size},"
+            "&H00FFFFFF,&H000000FF,&H000000FF,&H000000FF,"
+            "0,0,0,0,"
+            "100,100,0,0,"
+            "3,2,0,"
             f"2,60,60,{margin_v},1\n\n"
         )
 
@@ -836,18 +1002,19 @@ def write_ass(
             "Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n"
         )
 
-        for idx, (seg, track) in enumerate(ordered_with_tracks):
+        for seg in ordered_segments:
             if not seg.text.strip() or seg.duration <= 0:
                 continue
 
             start = format_ass_time(seg.start)
             end = format_ass_time(seg.start + seg.duration)
 
-            margin_v_for_track = margin_v + track * line_gap
+            margin_v_for_track = margin_v + seg.track * line_gap
             text = ass_escape(seg.text)
+            style_name = seg.style if seg.style else "Default"
 
             f.write(
-                f"Dialogue: 0,{start},{end},Default,,"
+                f"Dialogue: 0,{start},{end},{style_name},,"
                 f"0,0,{margin_v_for_track},,{text}\n"
             )
 
@@ -865,7 +1032,7 @@ def tsv_escape(value: str) -> str:
 def write_debug_tsv(path: str, segments: list[CaptionSegment]) -> None:
     with open(path, "w", encoding="utf-8") as f:
         f.write(
-            "start\tend\tdistance_ratio\tinserted\tmulan_index\tasr_text\tfinal_text\n"
+            "start\tend\tdistance_ratio\tinserted\tmulan_index\ttrack\tstyle\tasr_text\tfinal_text\n"
         )
 
         for seg in segments:
@@ -875,6 +1042,8 @@ def write_debug_tsv(path: str, segments: list[CaptionSegment]) -> None:
                 f"{seg.distance_ratio:.3f}\t"
                 f"{int(seg.inserted)}\t"
                 f"{seg.mulan_index}\t"
+                f"{seg.track}\t"
+                f"{tsv_escape(seg.style)}\t"
                 f"{tsv_escape(seg.source_text)}\t"
                 f"{tsv_escape(seg.text)}\n"
             )
@@ -1135,6 +1304,18 @@ def main() -> None:
         int(ass_cfg.get("max_chars_per_line", 42)),
     )
 
+    # Step ASS dédiée:
+    # - split aux frontières temporelles
+    # - assignation track
+    # - si chevauchement:
+    #   - anciennes lignes = fond noir
+    #   - dernière ligne affichée = fond rouge
+    ass_render_segments = prepare_ass_timeline_segments(
+        final_segments,
+        max_tracks=int(ass_cfg.get("max_tracks", 3)),
+        min_duration=float(ass_cfg.get("min_render_duration", 0.03)),
+    )
+
     suffix = "translated" if translator is not None else "mulan"
 
     ass_path = os.path.join(output_dir, f"{video_id}.{suffix}.ass")
@@ -1143,7 +1324,7 @@ def main() -> None:
 
     write_ass(
         ass_path,
-        final_segments,
+        ass_render_segments,
         play_res_x=int(ass_cfg.get("play_res_x", 1920)),
         play_res_y=int(ass_cfg.get("play_res_y", 1080)),
         font_name=str(ass_cfg.get("font_name", "Arial")),
@@ -1154,7 +1335,7 @@ def main() -> None:
     )
 
     write_txt(txt_path, final_segments)
-    write_debug_tsv(debug_path, final_segments)
+    write_debug_tsv(debug_path, ass_render_segments)
 
     log(f"[OK] ASS   : {ass_path}")
     log(f"[OK] TXT   : {txt_path}")
