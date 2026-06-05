@@ -48,17 +48,17 @@ class LocalTranslator:
         if AutoTokenizer is None or AutoModelForSeq2SeqLM is None:
             raise RuntimeError("transformers n'est pas disponible.")
 
-        if not source_language.strip():
-            raise ValueError("translation.source_language est obligatoire.")
-
-        if not target_language.strip():
-            raise ValueError("translation.target_language est obligatoire.")
-
         self.source_language = source_language.strip().lower()
         self.target_language = target_language.strip().lower()
         self.device = device
         self.max_length = max_length
         self.num_beams = num_beams
+
+        if not self.source_language:
+            raise ValueError("translation.source_language est obligatoire.")
+
+        if not self.target_language:
+            raise ValueError("translation.target_language est obligatoire.")
 
         resolved_model_path = Path(model_path).expanduser().resolve()
 
@@ -157,56 +157,6 @@ def normalized_char_distance_ratio(a: str, b: str) -> float:
     return levenshtein_distance(na, nb) / max(len(na), len(nb), 1)
 
 
-def looks_like_language(text: str, language: str) -> bool:
-    t = f" {normalize_text(text).lower()} "
-
-    markers = {
-        "fr": [
-            " je ", " tu ", " il ", " elle ", " nous ", " vous ",
-            " les ", " des ", " une ", " un ", " que ", " qui ",
-            " pas ", " mon ", " ton ", " son ", " dans ", " avec ",
-            " pour ", " plus ", " suis ", " c'est ", " j'", " l'",
-        ],
-        "en": [
-            " i ", " you ", " he ", " she ", " we ", " they ",
-            " the ", " and ", " not ", " my ", " your ", " is ",
-            " are ", " am ", " in ", " with ", " for ", " this ",
-            " that ", " don't ", " i'm ", " it's ",
-        ],
-        "es": [
-            " yo ", " tú ", " tu ", " él ", " ella ", " nosotros ",
-            " los ", " las ", " una ", " un ", " que ", " no ",
-            " mi ", " en ", " con ", " para ", " soy ", " estoy ",
-            " es ", " y ",
-        ],
-    }
-
-    language = language.lower().split("-")[0]
-    score = sum(1 for marker in markers.get(language, []) if marker in t)
-    return score >= 1
-
-
-def should_translate_text(
-    text: str,
-    source_language: str,
-    target_language: str,
-    skip_if_target_detected: bool = True,
-) -> bool:
-    if not text.strip():
-        return False
-
-    source_language = source_language.lower().split("-")[0]
-    target_language = target_language.lower().split("-")[0]
-
-    source_detected = looks_like_language(text, source_language)
-    target_detected = looks_like_language(text, target_language)
-
-    if skip_if_target_detected and target_detected and not source_detected:
-        return False
-
-    return True
-
-
 def extract_video_id(url: str) -> str:
     patterns = [
         r"(?:v=)([A-Za-z0-9_-]{11})",
@@ -226,19 +176,15 @@ def extract_video_id(url: str) -> str:
     raise ValueError(f"Impossible d'extraire l'id YouTube depuis: {url}")
 
 
-def format_srt_time(seconds: float) -> str:
-    ms = int(round(max(0.0, float(seconds)) * 1000))
-
-    h = ms // 3_600_000
-    ms %= 3_600_000
-
-    m = ms // 60_000
-    ms %= 60_000
-
-    s = ms // 1000
-    ms %= 1000
-
-    return f"{h:02}:{m:02}:{s:02},{ms:03}"
+def format_ass_time(seconds: float) -> str:
+    cs = int(round(max(0.0, float(seconds)) * 100))
+    h = cs // 360000
+    cs %= 360000
+    m = cs // 6000
+    cs %= 6000
+    s = cs // 100
+    cs %= 100
+    return f"{h}:{m:02}:{s:02}.{cs:02}"
 
 
 def parse_mulan_payload_from_line(line: str) -> Optional[str]:
@@ -359,12 +305,51 @@ def fetch_youtube_transcript(
     ]
 
 
+def merge_missing_lines_limited(
+    missing: list[dict[str, Any]],
+    matched_text: str,
+    max_merged_chars: int = 90,
+    max_missing_lines: int = 2,
+) -> str:
+    selected: list[str] = []
+    matched_text = normalize_text(matched_text)
+
+    if max_missing_lines <= 0 or max_merged_chars <= 0:
+        return matched_text
+
+    for item in reversed(missing):
+        text = normalize_text(item.get("text", ""))
+
+        if not text:
+            continue
+
+        candidate_lines = [text] + list(reversed(selected)) + [matched_text]
+        candidate = " ".join(candidate_lines)
+
+        if len(candidate) > max_merged_chars:
+            break
+
+        if len(selected) >= max_missing_lines:
+            break
+
+        selected.append(text)
+
+    selected = list(reversed(selected))
+
+    if not selected:
+        return matched_text
+
+    return normalize_text(" ".join(selected + [matched_text]))
+
+
 def align_mulan_to_asr_by_char_distance(
     asr_segments: list[CaptionSegment],
     mulan_items: list[dict[str, Any]],
     max_distance_ratio: float = 0.10,
     search_window: int = 12,
     insert_missing_between_matches: bool = True,
+    max_merged_chars: int = 90,
+    max_missing_lines: int = 2,
 ) -> list[CaptionSegment]:
     lyric_items = [item for item in mulan_items if item.get("text")]
     aligned: list[CaptionSegment] = []
@@ -373,7 +358,6 @@ def align_mulan_to_asr_by_char_distance(
     for seg in asr_segments:
         best_idx = -1
         best_ratio = 1.0
-
         search_end = min(len(lyric_items), mulan_cursor + max(1, search_window))
 
         for idx in range(mulan_cursor, search_end):
@@ -388,27 +372,15 @@ def align_mulan_to_asr_by_char_distance(
 
         if best_idx >= 0 and best_ratio <= max_distance_ratio:
             missing = lyric_items[mulan_cursor:best_idx]
+            matched = dict(lyric_items[best_idx])
 
             if missing and insert_missing_between_matches:
-                insert_count = len(missing)
-                total = max(0.5, min(seg.duration * 0.45, insert_count * 1.2))
-                each = total / insert_count
-                first_start = max(0.0, seg.start - total)
-
-                for miss_i, item in enumerate(missing):
-                    aligned.append(
-                        CaptionSegment(
-                            start=first_start + miss_i * each,
-                            duration=each,
-                            text=item["text"],
-                            source_text="",
-                            distance_ratio=1.0,
-                            mulan_index=mulan_cursor + miss_i,
-                            inserted=True,
-                        )
-                    )
-
-            matched = lyric_items[best_idx]
+                matched["text"] = merge_missing_lines_limited(
+                    missing,
+                    matched["text"],
+                    max_merged_chars=max_merged_chars,
+                    max_missing_lines=max_missing_lines,
+                )
 
             aligned.append(
                 CaptionSegment(
@@ -437,7 +409,7 @@ def align_mulan_to_asr_by_char_distance(
                 )
             )
 
-    aligned.sort(key=lambda s: (s.start, 0 if s.inserted else 1))
+    aligned.sort(key=lambda s: (s.start, s.start + s.duration))
     return aligned
 
 
@@ -480,97 +452,54 @@ def apply_mulan_timeline_adjustments(
             )
         )
 
+    adjusted.sort(key=lambda s: (s.start, s.start + s.duration))
     return adjusted
 
 
-def merge_identical_adjacent_segments(
-    segments: list[CaptionSegment],
-    max_gap: float = 0.03,
-) -> list[CaptionSegment]:
-    if not segments:
-        return []
+def looks_like_language(text: str, language: str) -> bool:
+    t = f" {normalize_text(text).lower()} "
 
-    merged: list[CaptionSegment] = [segments[0]]
+    markers = {
+        "fr": [
+            " je ", " tu ", " il ", " elle ", " nous ", " vous ",
+            " les ", " des ", " une ", " un ", " que ", " qui ",
+            " pas ", " dans ", " avec ", " pour ",
+        ],
+        "en": [
+            " i ", " you ", " he ", " she ", " we ", " they ",
+            " the ", " and ", " not ", " my ", " your ", " is ",
+            " are ", " in ", " with ", " for ",
+        ],
+        "es": [
+            " yo ", " tú ", " tu ", " él ", " ella ", " nosotros ",
+            " los ", " las ", " una ", " un ", " que ", " no ",
+            " mi ", " en ", " con ", " para ", " y ",
+        ],
+    }
 
-    for seg in segments[1:]:
-        last = merged[-1]
-        last_end = last.start + last.duration
-
-        if seg.text == last.text and abs(seg.start - last_end) <= max_gap:
-            merged[-1] = CaptionSegment(
-                start=last.start,
-                duration=(seg.start + seg.duration) - last.start,
-                text=last.text,
-                source_text=last.source_text,
-                distance_ratio=last.distance_ratio,
-                mulan_index=last.mulan_index,
-                inserted=last.inserted,
-            )
-        else:
-            merged.append(seg)
-
-    return merged
+    language = language.lower().split("-")[0]
+    return sum(1 for marker in markers.get(language, []) if marker in t) >= 1
 
 
-def build_bottom_up_timeline_segments(
-    segments: list[CaptionSegment],
-    max_lines: int = 3,
-    min_duration: float = 0.15,
-) -> list[CaptionSegment]:
-    clean_segments = [
-        seg for seg in segments
-        if seg.text.strip() and seg.duration > 0
-    ]
+def should_translate_text(
+    text: str,
+    source_language: str,
+    target_language: str,
+    skip_if_target_detected: bool = True,
+) -> bool:
+    if not text.strip():
+        return False
 
-    if not clean_segments:
-        return []
+    source_language = source_language.lower().split("-")[0]
+    target_language = target_language.lower().split("-")[0]
 
-    boundaries: set[float] = set()
+    source_detected = looks_like_language(text, source_language)
+    target_detected = looks_like_language(text, target_language)
 
-    for seg in clean_segments:
-        boundaries.add(seg.start)
-        boundaries.add(seg.start + seg.duration)
+    if skip_if_target_detected and target_detected and not source_detected:
+        return False
 
-    times = sorted(boundaries)
-    output: list[CaptionSegment] = []
-
-    for i in range(len(times) - 1):
-        start = times[i]
-        end = times[i + 1]
-        duration = end - start
-
-        if duration < min_duration:
-            continue
-
-        active = [
-            seg
-            for seg in clean_segments
-            if seg.start <= start and (seg.start + seg.duration) > start
-        ]
-
-        if not active:
-            continue
-
-        active = sorted(active, key=lambda s: s.start)
-        visible = active[-max_lines:]
-
-        visual_lines = list(reversed([seg.text.strip() for seg in visible]))
-
-        output.append(
-            CaptionSegment(
-                start=start,
-                duration=duration,
-                text="\n".join(visual_lines),
-                source_text=" | ".join(
-                    seg.source_text for seg in visible if seg.source_text
-                ),
-                distance_ratio=max(seg.distance_ratio for seg in visible),
-                mulan_index=visible[-1].mulan_index,
-                inserted=any(seg.inserted for seg in visible),
-            )
-        )
-
-    return merge_identical_adjacent_segments(output)
+    return True
 
 
 def maybe_translate_segments(
@@ -592,11 +521,7 @@ def maybe_translate_segments(
             skip_if_target_detected=skip_if_target_detected,
         ):
             if log_progress:
-                log(
-                    f"[INFO] Segment {idx}/{len(segments)} déjà en langue cible "
-                    f"ou non pertinent, traduction ignorée"
-                )
-
+                log(f"[INFO] Segment {idx}/{len(segments)} non traduit")
             out.append(seg)
             continue
 
@@ -618,15 +543,189 @@ def maybe_translate_segments(
     return out
 
 
-def write_srt(path: str, segments: list[CaptionSegment]) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        for idx, seg in enumerate(segments, start=1):
-            f.write(f"{idx}\n")
-            f.write(
-                f"{format_srt_time(seg.start)} --> "
-                f"{format_srt_time(seg.start + seg.duration)}\n"
+def wrap_text_max_chars(text: str, max_chars_per_line: int) -> str:
+    text = normalize_text(text)
+
+    if max_chars_per_line <= 0:
+        return text
+
+    words = text.split()
+
+    if not words:
+        return text
+
+    lines: list[str] = []
+    current: list[str] = []
+    current_len = 0
+
+    for word in words:
+        if not current:
+            current = [word]
+            current_len = len(word)
+            continue
+
+        candidate_len = current_len + 1 + len(word)
+
+        if candidate_len <= max_chars_per_line:
+            current.append(word)
+            current_len = candidate_len
+        else:
+            lines.append(" ".join(current))
+            current = [word]
+            current_len = len(word)
+
+    if current:
+        lines.append(" ".join(current))
+
+    return "\n".join(lines)
+
+
+def apply_max_chars_per_line(
+    segments: list[CaptionSegment],
+    max_chars_per_line: int,
+) -> list[CaptionSegment]:
+    if max_chars_per_line <= 0:
+        return segments
+
+    out: list[CaptionSegment] = []
+
+    for seg in segments:
+        out.append(
+            CaptionSegment(
+                start=seg.start,
+                duration=seg.duration,
+                text=wrap_text_max_chars(seg.text, max_chars_per_line),
+                source_text=seg.source_text,
+                distance_ratio=seg.distance_ratio,
+                mulan_index=seg.mulan_index,
+                inserted=seg.inserted,
             )
-            f.write(f"{seg.text}\n\n")
+        )
+
+    return out
+
+
+def assign_ass_tracks(
+    segments: list[CaptionSegment],
+    max_tracks: int = 3,
+) -> list[tuple[CaptionSegment, int]]:
+    ordered = sorted(segments, key=lambda s: (s.start, s.start + s.duration))
+
+    active: list[tuple[CaptionSegment, int]] = []
+    result: list[tuple[CaptionSegment, int]] = []
+
+    for seg in ordered:
+        start = seg.start
+
+        active = [
+            (active_seg, track)
+            for active_seg, track in active
+            if active_seg.start + active_seg.duration > start
+        ]
+
+        active = [
+            (active_seg, track + 1)
+            for active_seg, track in active
+            if track + 1 < max_tracks
+        ]
+
+        result = [
+            (
+                old_seg,
+                old_track + 1
+                if old_seg.start + old_seg.duration > start
+                and old_track + 1 < max_tracks
+                else old_track,
+            )
+            for old_seg, old_track in result
+        ]
+
+        active.append((seg, 0))
+        result.append((seg, 0))
+
+    return result
+
+
+def ass_escape(text: str) -> str:
+    text = str(text)
+    text = text.replace("\\", r"\\")
+    text = text.replace("{", r"\{").replace("}", r"\}")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = text.replace("\n", r"\N")
+    return text.strip()
+
+
+def ass_filter_path(path: str) -> str:
+    return (
+        path
+        .replace("\\", "\\\\")
+        .replace(":", "\\:")
+        .replace("'", r"\'")
+    )
+
+
+def write_ass(
+    path: str,
+    segments: list[CaptionSegment],
+    play_res_x: int = 1920,
+    play_res_y: int = 1080,
+    font_name: str = "Arial",
+    font_size: int = 54,
+    margin_v: int = 45,
+    line_gap: int = 72,
+    max_tracks: int = 3,
+) -> None:
+    ordered_with_tracks = assign_ass_tracks(
+        segments,
+        max_tracks=max_tracks,
+    )
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("[Script Info]\n")
+        f.write("ScriptType: v4.00+\n")
+        f.write("WrapStyle: 2\n")
+        f.write("ScaledBorderAndShadow: yes\n")
+        f.write(f"PlayResX: {play_res_x}\n")
+        f.write(f"PlayResY: {play_res_y}\n\n")
+
+        f.write("[V4+ Styles]\n")
+        f.write(
+            "Format: "
+            "Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,"
+            "OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,"
+            "ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,"
+            "Alignment,MarginL,MarginR,MarginV,Encoding\n"
+        )
+        f.write(
+            "Style: "
+            f"Default,{font_name},{font_size},"
+            "&H00FFFFFF,&H000000FF,&H00000000,&H64000000,"
+            "0,0,0,0,"
+            "100,100,0,0,"
+            "1,2,0,"
+            f"2,60,60,{margin_v},1\n\n"
+        )
+
+        f.write("[Events]\n")
+        f.write(
+            "Format: "
+            "Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n"
+        )
+
+        for idx, (seg, track) in enumerate(ordered_with_tracks):
+            if not seg.text.strip() or seg.duration <= 0:
+                continue
+
+            start = format_ass_time(seg.start)
+            end = format_ass_time(seg.start + seg.duration)
+
+            margin_v_for_track = margin_v + track * line_gap
+            text = ass_escape(seg.text)
+
+            f.write(
+                f"Dialogue: {idx},{start},{end},Default,,"
+                f"0,0,{margin_v_for_track},,{text}\n"
+            )
 
 
 def write_txt(path: str, segments: list[CaptionSegment]) -> None:
@@ -761,9 +860,9 @@ def download_youtube_video(
     return str(video_candidates[0])
 
 
-def burn_srt_to_video(
+def burn_ass_to_video(
     input_video_path: str,
-    input_srt_path: str,
+    input_ass_path: str,
     output_video_path: str,
 ) -> str:
     Path(output_video_path).parent.mkdir(parents=True, exist_ok=True)
@@ -771,26 +870,10 @@ def burn_srt_to_video(
     if not os.path.isfile(input_video_path):
         raise FileNotFoundError(f"Vidéo introuvable: {input_video_path}")
 
-    if not os.path.isfile(input_srt_path):
-        raise FileNotFoundError(f"SRT introuvable: {input_srt_path}")
+    if not os.path.isfile(input_ass_path):
+        raise FileNotFoundError(f"ASS introuvable: {input_ass_path}")
 
-    srt_for_filter = (
-        input_srt_path
-        .replace("\\", "\\\\")
-        .replace(":", "\\:")
-        .replace("'", r"\'")
-    )
-
-    subtitle_style = (
-        "FontName=Arial,"
-        "PrimaryColour=&H00FFFFFF,"
-        "OutlineColour=&H00000000,"
-        "BorderStyle=1,"
-        "Outline=1,"
-        "Shadow=0,"
-        "MarginV=25,"
-        "Alignment=2"
-    )
+    ass_for_filter = ass_filter_path(input_ass_path)
 
     cmd = [
         "ffmpeg",
@@ -798,7 +881,7 @@ def burn_srt_to_video(
         "-i",
         input_video_path,
         "-vf",
-        f"subtitles='{srt_for_filter}':force_style='{subtitle_style}'",
+        f"ass='{ass_for_filter}'",
         "-c:v",
         "libx264",
         "-preset",
@@ -813,7 +896,7 @@ def burn_srt_to_video(
     result = run_cmd(cmd)
 
     if result.returncode != 0:
-        raise RuntimeError("Échec burn SRT dans la vidéo.")
+        raise RuntimeError("Échec burn ASS dans la vidéo.")
 
     return output_video_path
 
@@ -821,7 +904,7 @@ def burn_srt_to_video(
 def maybe_download_and_burn(
     youtube_url: str,
     video_id: str,
-    srt_path: str,
+    ass_path: str,
     output_dir: str,
     config: dict[str, Any],
 ) -> Optional[str]:
@@ -850,7 +933,7 @@ def maybe_download_and_burn(
         Path(output_dir) / f"{video_id}.burned.mp4"
     )
 
-    return burn_srt_to_video(video_path, srt_path, output_video)
+    return burn_ass_to_video(video_path, ass_path, output_video)
 
 
 def main() -> None:
@@ -869,10 +952,11 @@ def main() -> None:
 
     max_distance_ratio = float(alignment_cfg.get("max_distance_ratio", 0.10))
     search_window = int(alignment_cfg.get("search_window", 12))
-
     insert_missing_between_matches = bool(
         alignment_cfg.get("insert_missing_between_matches", True)
     )
+    max_merged_chars = int(alignment_cfg.get("max_merged_chars", 90))
+    max_missing_lines = int(alignment_cfg.get("max_missing_lines", 2))
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -895,6 +979,8 @@ def main() -> None:
         max_distance_ratio=max_distance_ratio,
         search_window=search_window,
         insert_missing_between_matches=insert_missing_between_matches,
+        max_merged_chars=max_merged_chars,
+        max_missing_lines=max_missing_lines,
     )
 
     adjusted = apply_mulan_timeline_adjustments(aligned, mulan_items)
@@ -912,33 +998,44 @@ def main() -> None:
         ),
     )
 
-    stack_cfg = config.get("subtitle_stack", {}) or {}
-
-    if stack_cfg.get("enabled", False):
-        final_segments = build_bottom_up_timeline_segments(
-            final_segments,
-            max_lines=int(stack_cfg.get("max_lines", 3)),
-            min_duration=float(stack_cfg.get("min_duration", 0.15)),
-        )
+    final_segments.sort(key=lambda s: (s.start, s.start + s.duration))
 
     suffix = "translated" if translator is not None else "mulan"
 
-    srt_path = os.path.join(output_dir, f"{video_id}.{suffix}.srt")
+    ass_path = os.path.join(output_dir, f"{video_id}.{suffix}.ass")
     txt_path = os.path.join(output_dir, f"{video_id}.{suffix}.txt")
     debug_path = os.path.join(output_dir, f"{video_id}.debug.tsv")
 
-    write_srt(srt_path, final_segments)
+    ass_cfg = config.get("ass", {}) or {}
+
+    final_segments = apply_max_chars_per_line(
+        final_segments,
+        int(ass_cfg.get("max_chars_per_line", 42)),
+    )
+
+    write_ass(
+        ass_path,
+        final_segments,
+        play_res_x=int(ass_cfg.get("play_res_x", 1920)),
+        play_res_y=int(ass_cfg.get("play_res_y", 1080)),
+        font_name=str(ass_cfg.get("font_name", "Arial")),
+        font_size=int(ass_cfg.get("font_size", 54)),
+        margin_v=int(ass_cfg.get("margin_v", 45)),
+        line_gap=int(ass_cfg.get("line_gap", 72)),
+        max_tracks=int(ass_cfg.get("max_tracks", 3)),
+    )
+
     write_txt(txt_path, final_segments)
     write_debug_tsv(debug_path, final_segments)
 
-    log(f"[OK] SRT   : {srt_path}")
+    log(f"[OK] ASS   : {ass_path}")
     log(f"[OK] TXT   : {txt_path}")
     log(f"[OK] DEBUG : {debug_path}")
 
     burned_video = maybe_download_and_burn(
         youtube_url,
         video_id,
-        srt_path,
+        ass_path,
         output_dir,
         config,
     )

@@ -1,4 +1,4 @@
-youtube_url: "https://youtu.be/5R4UFJG5vTE"
+youtube_url: "https://youtu.be/O6I696BE1x4"
 
 mulan_file: "./lyrics.mulan"
 
@@ -10,34 +10,40 @@ languages:
 output_dir: "./out"
 
 alignment:
-  max_distance_ratio: 0.05
+  max_distance_ratio: 0.10
   search_window: 12
   insert_missing_between_matches: true
+  max_merged_chars: 90
+  max_missing_lines: 2
 
-subtitle_stack:
-  enabled: true
-  max_lines: 3
-  min_duration: 0.15
+ass:
+  play_res_x: 1920
+  play_res_y: 1080
+  font_name: Arial
+  font_size: 54
+  margin_v: 45
+  line_gap: 72
+  max_tracks: 3
+  max_chars_per_line: 42
 
 translation:
-  enabled: true
+  enabled: false
+  model_path: "/home/drodriguez/models/opus-mt-fr-es"
   source_language: "fr"
-  target_language: "en"
-  model_path: "/home/drodriguez/dev/opus-mt-fr-en"
-  local_files_only: true
-  device: cpu
-  skip_if_target_detected: true
+  target_language: "es"
   max_length: 256
-  num_beams: 1
+  local_files_only: true
   device: "cpu"
+  num_beams: 1
   log_progress: true
+  skip_if_target_detected: true
 
 youtube_download:
-  enabled: true
+  enabled: false
   format: "bv*[height<=720]+ba/b[height<=720]/best"
-  cookies_from_browser: "chrome"
+  cookies_from_browser: ""
   cookies: ""
-  remote_components: "ejs:github"
+  remote_components: ""
   no_check_certificate: false
 
 burn:
